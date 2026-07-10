@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  background-color: #faf9f5;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+}
+
+.font-display {
+  font-family: "Source Serif 4", serif;
+}
+
+.font-sans {
+  font-family: "Inter", sans-serif;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+.bg-cream {
+  background-color: #faf9f5;
+}
+
+.text-ink {
+  color: #2d2a26;
+}
+
+.text-muted {
+  color: #8c8577;
+}
+
+.border-hair {
+  border-color: #ede9e0;
+}
+
+.card {
+  background-color: #ffffff;
+  border: 1px solid #ede9e0;
+}
+
+.card-shadow {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 12px 32px -12px rgba(0, 0, 0, 0.1);
+}
+
+.row-shadow {
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 6px 16px -8px rgba(0, 0, 0, 0.06);
+}
+
+.btn-gradient {
+  background: linear-gradient(to right, #c15f3c, #d9825c);
+}
+
+.icon-gradient {
+  background: linear-gradient(135deg, #c15f3c, #d9825c);
+}
+
+.input-field {
+  background-color: #faf9f5;
+  border: 1px solid #e5e0d5;
+  color: #2d2a26;
+}
+
+.input-field:focus {
+  outline: none;
+  border-color: #c15f3c;
+}
+
+.chip {
+  background-color: #faf9f5;
+  border: 1px solid #e5e0d5;
+  color: #5b564c;
+}
+
+.chip.active {
+  background-color: #c15f3c;
+  border-color: #c15f3c;
+  color: #ffffff;
+}
