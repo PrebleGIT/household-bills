@@ -4,6 +4,13 @@ import { useState, useEffect, useCallback } from "react";
 import { Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, ChevronDown, LogOut, Lock } from "lucide-react";
 
 const PAYMENT_TYPES = ["Bank Acc.", "Autopay", "Check", "Cash", "Credit Card"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const FREQUENCIES = [
+  { label: "Monthly", value: 1 },
+  { label: "Every 3 Mo", value: 3 },
+  { label: "Every 6 Mo", value: 6 },
+  { label: "Yearly", value: 12 },
+];
 
 const ordinal = (n) => {
   const s = ["th", "st", "nd", "rd"];
@@ -11,7 +18,28 @@ const ordinal = (n) => {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
-const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc." };
+// A bill is "active" this month if it's monthly, or if this month falls on
+// its recurring cycle counting from its anchor month.
+const isBillActiveThisMonth = (bill, currentMonth) => {
+  const freq = bill.frequencyMonths || 1;
+  if (freq <= 1) return true;
+  const anchor = bill.anchorMonth || currentMonth;
+  const diff = ((currentMonth - anchor) % freq + freq) % freq;
+  return diff === 0;
+};
+
+const dueMonthsLabel = (frequencyMonths, anchorMonth) => {
+  if (frequencyMonths <= 1) return "Every month";
+  const months = [];
+  for (let m = 1; m <= 12; m++) {
+    if (((m - anchorMonth) % frequencyMonths + frequencyMonths) % frequencyMonths === 0) {
+      months.push(MONTH_NAMES[m - 1].slice(0, 3));
+    }
+  }
+  return "Due in: " + months.join(", ");
+};
+
+const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc.", frequencyMonths: 1, anchorMonth: new Date().getMonth() + 1 };
 const emptySimpleForm = { name: "", amount: "" };
 
 function ProgressRing({ pct, label = "Paid" }) {
@@ -57,7 +85,6 @@ export default function BillTracker() {
   const [view, setView] = useState("bills");
   const [editMode, setEditMode] = useState(false);
 
-  // ---- Bills state ----
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -67,8 +94,8 @@ export default function BillTracker() {
   const [form, setForm] = useState(emptyBillForm);
   const [confirmReset, setConfirmReset] = useState(false);
   const [showPaid, setShowPaid] = useState(false);
+  const [showInactive, setShowInactive] = useState(false);
 
-  // ---- Budget state ----
   const [budgetIncomes, setBudgetIncomes] = useState([]);
   const [budgetItems, setBudgetItems] = useState([]);
   const [budgetLoading, setBudgetLoading] = useState(true);
@@ -161,7 +188,6 @@ export default function BillTracker() {
     window.location.href = "/login";
   };
 
-  // ---- Bill CRUD ----
   const openAdd = () => {
     setEditingId(null);
     setForm(emptyBillForm);
@@ -169,7 +195,14 @@ export default function BillTracker() {
   };
   const openEdit = (bill) => {
     setEditingId(bill.id);
-    setForm({ name: bill.name, dueDay: String(bill.dueDay), amount: String(bill.amount), paymentType: bill.paymentType });
+    setForm({
+      name: bill.name,
+      dueDay: String(bill.dueDay),
+      amount: String(bill.amount),
+      paymentType: bill.paymentType,
+      frequencyMonths: bill.frequencyMonths || 1,
+      anchorMonth: bill.anchorMonth || new Date().getMonth() + 1,
+    });
     setShowForm(true);
   };
   const closeForm = () => {
@@ -181,12 +214,14 @@ export default function BillTracker() {
     const name = form.name.trim();
     const dueDay = Math.min(31, Math.max(1, parseInt(form.dueDay, 10) || 1));
     const amount = parseFloat(form.amount) || 0;
+    const frequencyMonths = form.frequencyMonths || 1;
+    const anchorMonth = form.anchorMonth || new Date().getMonth() + 1;
     if (!name) return;
     if (editingId) {
-      const next = bills.map((b) => (b.id === editingId ? { ...b, name, dueDay, amount, paymentType: form.paymentType } : b));
+      const next = bills.map((b) => (b.id === editingId ? { ...b, name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth } : b));
       persist(next);
     } else {
-      const next = [...bills, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDay, amount, paymentType: form.paymentType, paid: false }];
+      const next = [...bills, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth, paid: false }];
       persist(next);
     }
     closeForm();
@@ -205,7 +240,6 @@ export default function BillTracker() {
     setConfirmReset(false);
   };
 
-  // ---- Income CRUD ----
   const openAddIncome = () => {
     setEditingIncomeId(null);
     setIncomeForm(emptySimpleForm);
@@ -239,7 +273,6 @@ export default function BillTracker() {
     persistBudget(next, budgetItems);
   };
 
-  // ---- Budget item CRUD ----
   const openAddItem = () => {
     setEditingItemId(null);
     setItemForm(emptySimpleForm);
@@ -273,11 +306,13 @@ export default function BillTracker() {
     persistBudget(budgetIncomes, next);
   };
 
-  // ---- Derived values ----
-  const unpaid = bills.filter((b) => !b.paid).sort((a, b) => a.dueDay - b.dueDay);
-  const paid = bills.filter((b) => b.paid).sort((a, b) => a.dueDay - b.dueDay);
-  const total = bills.reduce((sum, b) => sum + b.amount, 0);
-  const paidTotal = bills.filter((b) => b.paid).reduce((sum, b) => sum + b.amount, 0);
+  const currentMonth = new Date().getMonth() + 1;
+  const activeBills = bills.filter((b) => isBillActiveThisMonth(b, currentMonth));
+  const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, currentMonth));
+  const unpaid = activeBills.filter((b) => !b.paid).sort((a, b) => a.dueDay - b.dueDay);
+  const paid = activeBills.filter((b) => b.paid).sort((a, b) => a.dueDay - b.dueDay);
+  const total = activeBills.reduce((sum, b) => sum + b.amount, 0);
+  const paidTotal = activeBills.filter((b) => b.paid).reduce((sum, b) => sum + b.amount, 0);
   const remaining = total - paidTotal;
   const progressPct = total > 0 ? Math.round((paidTotal / total) * 100) : 0;
   const today = new Date().getDate();
@@ -286,8 +321,6 @@ export default function BillTracker() {
 
   const totalIncome = budgetIncomes.reduce((s, i) => s + i.amount, 0);
   const otherExpensesTotal = budgetItems.reduce((s, i) => s + i.amount, 0);
-  // Bills are the shared source of truth — same "total" used in the Bills tab —
-  // so editing a bill anywhere updates this total too.
   const totalExpenses = total + otherExpensesTotal;
   const leftover = totalIncome - totalExpenses;
   const weeklyLeftover = leftover / 4;
@@ -298,11 +331,7 @@ export default function BillTracker() {
     <div className="relative card row-shadow rounded-2xl overflow-hidden">
       <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: bill.paid ? "#6E8F6C" : "#C15F3C" }} />
       <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
-        <button
-          onClick={() => togglePaid(bill.id)}
-          className="shrink-0 flex items-center justify-center active:opacity-60"
-          style={{ width: 64 }}
-        >
+        <button onClick={() => togglePaid(bill.id)} className="shrink-0 flex items-center justify-center active:opacity-60" style={{ width: 64 }}>
           <span
             className="rounded-full flex items-center justify-center"
             style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : "2px solid #E5D9CF", backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff" }}
@@ -318,6 +347,7 @@ export default function BillTracker() {
               </div>
               <div className="text-muted" style={{ fontSize: 12, marginTop: 2 }}>
                 Due the {ordinal(bill.dueDay)} · {bill.paymentType}
+                {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
               </div>
             </div>
             <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: bill.paid ? "#A39D8E" : "#2D2A26" }}>
@@ -363,7 +393,6 @@ export default function BillTracker() {
 
   return (
     <div className="min-h-screen bg-cream text-ink font-sans pb-28">
-      {/* Header */}
       <div className="px-5 pt-7 pb-1 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="icon-gradient rounded-xl flex items-center justify-center" style={{ width: 40, height: 40 }}>
@@ -390,7 +419,6 @@ export default function BillTracker() {
         </div>
       </div>
 
-      {/* Tab switcher */}
       <div className="px-5 mt-4">
         <div className="card flex" style={{ borderRadius: 14, padding: 4 }}>
           <button
@@ -412,7 +440,6 @@ export default function BillTracker() {
 
       {view === "bills" ? (
         <>
-          {/* Bills hero summary card */}
           <div className="mx-5 mt-4 card card-shadow" style={{ borderRadius: 24, padding: 20 }}>
             <div className="flex items-center gap-5">
               <ProgressRing pct={progressPct} label="Paid" />
@@ -481,13 +508,25 @@ export default function BillTracker() {
                     {showPaid && <div className="space-y-2.5">{paid.map((bill) => <BillRow key={bill.id} bill={bill} />)}</div>}
                   </div>
                 )}
+                {inactiveBills.length > 0 && (
+                  <div className="mt-6">
+                    <button onClick={() => setShowInactive((s) => !s)} className="w-full flex items-center justify-between mb-2.5">
+                      <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Not Due This Month ({inactiveBills.length})</span>
+                      <ChevronDown size={15} color="#8C8577" style={{ transition: "transform 0.2s", transform: showInactive ? "rotate(180deg)" : "rotate(0deg)" }} />
+                    </button>
+                    {showInactive && (
+                      <div className="space-y-2.5">
+                        {[...inactiveBills].sort((a, b) => a.dueDay - b.dueDay).map((bill) => <BillRow key={bill.id} bill={bill} />)}
+                      </div>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>
         </>
       ) : (
         <>
-          {/* Budget hero summary card */}
           <div className="mx-5 mt-4 card card-shadow" style={{ borderRadius: 24, padding: 20 }}>
             <div className="flex items-center gap-5">
               <ProgressRing pct={allocatedPct} label="Spent" />
@@ -532,7 +571,6 @@ export default function BillTracker() {
             <div className="text-center text-muted text-sm py-10">Loading…</div>
           ) : (
             <>
-              {/* Income section */}
               <div className="px-5 mt-6">
                 <div className="flex items-center justify-between mb-2.5">
                   <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Income ({budgetIncomes.length})</span>
@@ -549,20 +587,19 @@ export default function BillTracker() {
                 </div>
               </div>
 
-              {/* Bills section — shared with the Bills tab, not a copy */}
               <div className="px-5 mt-6">
                 <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Bills ({bills.length})</span>
+                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Bills This Month ({activeBills.length})</span>
                   {editMode && <button onClick={openAdd} style={{ color: "#C15F3C", fontSize: 12, fontWeight: 600 }}>+ Add</button>}
                 </div>
                 <p className="text-muted" style={{ fontSize: 11, marginBottom: 10 }}>
-                  These are the same bills from the Bills tab — edit one here and it updates there too.
+                  Same bills as the Bills tab — edit one here and it updates there too. Quarterly/yearly bills only appear in the months they're due.
                 </p>
                 <div className="space-y-2.5">
-                  {bills.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No bills yet.</div>
+                  {activeBills.length === 0 ? (
+                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No bills due this month.</div>
                   ) : (
-                    [...bills]
+                    [...activeBills]
                       .sort((a, b) => a.dueDay - b.dueDay)
                       .map((bill) => (
                         <SimpleRow key={bill.id} name={bill.name} amount={bill.amount} accent="#6E8F6C" onEdit={() => openEdit(bill)} onDelete={() => deleteBill(bill.id)} />
@@ -571,7 +608,6 @@ export default function BillTracker() {
                 </div>
               </div>
 
-              {/* Other expenses section — budget-only items, not tied to a due date */}
               <div className="px-5 mt-6">
                 <div className="flex items-center justify-between mb-2.5">
                   <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Other Expenses ({budgetItems.length})</span>
@@ -592,7 +628,6 @@ export default function BillTracker() {
         </>
       )}
 
-      {/* Bottom action bar */}
       {!editMode ? (
         <div className="fixed bottom-0 left-0 right-0 flex items-center justify-center border-hair" style={{ backgroundColor: "rgba(250,249,245,0.95)", backdropFilter: "blur(6px)", padding: "16px 20px", borderTopWidth: 1, borderTopStyle: "solid" }}>
           <span className="text-muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
@@ -630,10 +665,9 @@ export default function BillTracker() {
         </div>
       )}
 
-      {/* Add/Edit Bill modal */}
       {showForm && (
         <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)" }}>
+          <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)", maxHeight: "88vh", overflowY: "auto" }}>
             <div className="mx-auto mb-4" style={{ width: 40, height: 4, backgroundColor: "#E5E0D5", borderRadius: 999 }} />
             <div className="flex items-center justify-between mb-5">
               <h2 className="font-display" style={{ fontSize: 22, fontWeight: 600, color: "#2D2A26" }}>{editingId ? "Edit Bill" : "Add Bill"}</h2>
@@ -664,6 +698,29 @@ export default function BillTracker() {
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Frequency</label>
+                <div className="grid grid-cols-4 gap-2 mt-1">
+                  {FREQUENCIES.map((f) => (
+                    <button key={f.value} onClick={() => setForm({ ...form, frequencyMonths: f.value })} className={`chip ${form.frequencyMonths === f.value ? "active" : ""} rounded-lg`} style={{ padding: "8px 0", fontSize: 11, fontWeight: 500 }}>{f.label}</button>
+                  ))}
+                </div>
+              </div>
+              {form.frequencyMonths > 1 && (
+                <div>
+                  <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>One month it's due</label>
+                  <select
+                    value={form.anchorMonth}
+                    onChange={(e) => setForm({ ...form, anchorMonth: parseInt(e.target.value, 10) })}
+                    className="input-field w-full mt-1 rounded-xl px-3 py-3"
+                  >
+                    {MONTH_NAMES.map((name, i) => (
+                      <option key={i} value={i + 1}>{name}</option>
+                    ))}
+                  </select>
+                  <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>{dueMonthsLabel(form.frequencyMonths, form.anchorMonth)}</p>
+                </div>
+              )}
               <button onClick={submitForm} disabled={!form.name.trim()} className="btn-gradient w-full mt-2 rounded-xl" style={{ padding: "14px 0", fontSize: 14, fontWeight: 600, color: "#ffffff", opacity: !form.name.trim() ? 0.4 : 1 }}>
                 {editingId ? "Save changes" : "Add bill"}
               </button>
@@ -672,7 +729,6 @@ export default function BillTracker() {
         </div>
       )}
 
-      {/* Add/Edit Income modal */}
       {showIncomeForm && (
         <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
           <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)" }}>
@@ -700,7 +756,6 @@ export default function BillTracker() {
         </div>
       )}
 
-      {/* Add/Edit Expense modal */}
       {showItemForm && (
         <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
           <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)" }}>
@@ -728,7 +783,6 @@ export default function BillTracker() {
         </div>
       )}
 
-      {/* Reset confirm modal */}
       {confirmReset && (
         <div className="fixed inset-0 flex items-center justify-center z-20 px-6" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
           <div className="w-full max-w-sm bg-white rounded-2xl p-6" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
