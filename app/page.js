@@ -299,13 +299,13 @@ export default function BillTracker() {
       <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: bill.paid ? "#6E8F6C" : "#C15F3C" }} />
       <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
         <button
-          onClick={() => editMode && togglePaid(bill.id)}
+          onClick={() => togglePaid(bill.id)}
           className="shrink-0 flex items-center justify-center active:opacity-60"
-          style={{ width: 64, cursor: editMode ? "pointer" : "default" }}
+          style={{ width: 64 }}
         >
           <span
             className="rounded-full flex items-center justify-center"
-            style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : "2px solid #E5D9CF", backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff", opacity: editMode ? 1 : 0.7 }}
+            style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : "2px solid #E5D9CF", backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff" }}
           >
             {bill.paid && <Check size={15} color="#ffffff" strokeWidth={3} />}
           </span>
