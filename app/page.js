@@ -418,6 +418,10 @@ export default function BillTracker() {
   const leftover = totalIncome - totalExpenses;
   const weeklyLeftover = leftover / 4;
   const allocatedPct = totalIncome > 0 ? Math.round((totalExpenses / totalIncome) * 100) : 0;
+  const combinedExpenses = [
+    ...activeBills.map((b) => ({ id: b.id, name: b.name, amount: b.amount, kind: "bill", ref: b })),
+    ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
+  ].sort((a, b) => b.amount - a.amount);
   const leftoverColor = leftover >= 0 ? "#6E8F6C" : "#A8492C";
 
   const BillRow = ({ bill }) => {
@@ -741,36 +745,22 @@ export default function BillTracker() {
 
               <div className="px-5 mt-6">
                 <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Bills This Month ({activeBills.length})</span>
-                  {editMode && <button onClick={openAdd} style={{ color: "#C15F3C", fontSize: 12, fontWeight: 600 }}>+ Add</button>}
-                </div>
-                <p className="text-muted" style={{ fontSize: 11, marginBottom: 10 }}>
-                  Same bills as the Bills tab — edit one here and it updates there too. Quarterly/yearly bills only appear in the months they're due.
-                </p>
-                <div className="space-y-2.5">
-                  {activeBills.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No bills due this month.</div>
-                  ) : (
-                    [...activeBills]
-                      .sort((a, b) => a.dueDay - b.dueDay)
-                      .map((bill) => (
-                        <SimpleRow key={bill.id} name={bill.name} amount={bill.amount} accent="#6E8F6C" onEdit={() => openEdit(bill)} onDelete={() => deleteBill(bill.id)} />
-                      ))
-                  )}
-                </div>
-              </div>
-
-              <div className="px-5 mt-6">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Other Expenses ({budgetItems.length})</span>
+                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Expenses ({combinedExpenses.length})</span>
                   {editMode && <button onClick={openAddItem} style={{ color: "#C15F3C", fontSize: 12, fontWeight: 600 }}>+ Add</button>}
                 </div>
                 <div className="space-y-2.5">
-                  {budgetItems.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No other expenses yet.</div>
+                  {combinedExpenses.length === 0 ? (
+                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No expenses yet.</div>
                   ) : (
-                    budgetItems.map((item) => (
-                      <SimpleRow key={item.id} name={item.name} amount={item.amount} accent="#C15F3C" onEdit={() => openEditItem(item)} onDelete={() => deleteItem(item.id)} />
+                    combinedExpenses.map((e) => (
+                      <SimpleRow
+                        key={e.id}
+                        name={e.name}
+                        amount={e.amount}
+                        accent="#C15F3C"
+                        onEdit={() => (e.kind === "bill" ? openEdit(e.ref) : openEditItem(e.ref))}
+                        onDelete={() => (e.kind === "bill" ? deleteBill(e.id) : deleteItem(e.id))}
+                      />
                     ))
                   )}
                 </div>
