@@ -72,3 +72,44 @@ Go to the **Deployments** tab → click the **...** menu on the latest deploymen
 Just update the `APP_PASSWORD` environment variable in Vercel and redeploy —
 no code changes needed. Anyone already logged in stays logged in (30-day
 session) until they log out or the cookie expires.
+
+## Setting up push notifications (optional)
+
+This lets the app send a lock-screen notification when a bill becomes due,
+and shows a red badge count on the home screen icon for bills that are due
+and still unpaid. This only works for the app once it's been added to the
+Home Screen (not in a regular Safari tab), on iOS 16.4 or later.
+
+**1. Add three more environment variables** in Vercel (Settings → Environment Variables):
+
+| Name | Value |
+|---|---|
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | `BJDJ3yCd-D-_gmI2AAWwSAsrUbb5pUlMH2HvvCX-XyhhbzrSdLfP-lBSyOy1Stg-U_aMjCKMliarC4r_1mpR5pw` |
+| `VAPID_PRIVATE_KEY` | `jJFzrmeA-5fYC1sDu2Yc2161jbs3T-HuIK3KGJjY9gQ` |
+| `VAPID_SUBJECT` | `mailto:youremail@example.com` (any email works, it's just required by the push spec) |
+
+These two keys were generated specifically for this project and aren't used
+anywhere else — you can use them as-is. (If you'd rather generate your own,
+any web-push VAPID key pair works fine.)
+
+**2. Add a cron secret** (recommended, stops randoms from hitting your cron endpoint):
+
+| Name | Value |
+|---|---|
+| `CRON_SECRET` | Another long random string, different from `SESSION_SECRET` |
+
+**3. Redeploy** so the new env vars take effect.
+
+**4. On each phone**, open the app (from the home screen icon), and you'll see
+a banner: "Get notified when a bill is due" → tap **Enable** → allow when iOS
+prompts you. Do this once per phone.
+
+**5. That's it.** Vercel's cron job checks once a day (around 9am Eastern) for
+any bill due that day and sends a notification if there's a match — the app
+only notifies about bills not yet marked paid. The home screen icon badge
+updates separately, any time you open the app, to show how many unpaid bills
+are already at or past their due date.
+
+Note: on Vercel's free Hobby plan, the daily cron job can fire any time within
+its scheduled hour, not at the exact minute — so don't expect it down to the
+second.

@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, ChevronDown, LogOut, Lock } from "lucide-react";
+import { Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff } from "lucide-react";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}
 
 const PAYMENT_TYPES = ["Bank Acc.", "Autopay", "Check", "Cash", "Credit Card"];
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -84,6 +91,37 @@ function ProgressRing({ pct, label = "Paid" }) {
 export default function BillTracker() {
   const [view, setView] = useState("bills");
   const [editMode, setEditMode] = useState(false);
+  const [notifStatus, setNotifStatus] = useState("unknown"); // unknown | unsupported | default | granted | denied
+
+  const realNow = new Date();
+  const realMonth = realNow.getMonth() + 1;
+  const realYear = realNow.getFullYear();
+  const realDay = realNow.getDate();
+
+  const [viewedMonth, setViewedMonth] = useState(realMonth);
+  const [viewedYear, setViewedYear] = useState(realYear);
+  const isCurrentMonth = viewedMonth === realMonth && viewedYear === realYear;
+
+  const goPrevMonth = () => {
+    if (viewedMonth === 1) {
+      setViewedMonth(12);
+      setViewedYear((y) => y - 1);
+    } else {
+      setViewedMonth((m) => m - 1);
+    }
+  };
+  const goNextMonth = () => {
+    if (viewedMonth === 12) {
+      setViewedMonth(1);
+      setViewedYear((y) => y + 1);
+    } else {
+      setViewedMonth((m) => m + 1);
+    }
+  };
+  const goToday = () => {
+    setViewedMonth(realMonth);
+    setViewedYear(realYear);
+  };
 
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -145,6 +183,61 @@ export default function BillTracker() {
     load();
     loadBudget();
   }, [load, loadBudget]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+      setNotifStatus("unsupported");
+      return;
+    }
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    setNotifStatus(Notification.permission); // "default" | "granted" | "denied"
+  }, []);
+
+  const enableNotifications = async () => {
+    try {
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+        setNotifStatus("unsupported");
+        return;
+      }
+      const permission = await Notification.requestPermission();
+      setNotifStatus(permission);
+      if (permission !== "granted") return;
+
+      const reg = await navigator.serviceWorker.ready;
+      const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+      if (!publicKey) {
+        setNotifStatus("unsupported");
+        return;
+      }
+      const subscription = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      await fetch("/api/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(subscription),
+      });
+    } catch (e) {
+      // Leave notifStatus as whatever Notification.permission reported.
+    }
+  };
+
+  // Keep the home-screen icon badge in sync with what's actually still unpaid.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("setAppBadge" in navigator)) return;
+    const today = new Date().getDate();
+    const currentMonth = new Date().getMonth() + 1;
+    const waitingCount = bills.filter(
+      (b) => !b.paid && isBillActiveThisMonth(b, currentMonth) && b.dueDay <= today
+    ).length;
+    if (waitingCount > 0) {
+      navigator.setAppBadge(waitingCount).catch(() => {});
+    } else if ("clearAppBadge" in navigator) {
+      navigator.clearAppBadge().catch(() => {});
+    }
+  }, [bills]);
 
   const persist = async (next) => {
     setBills(next);
@@ -306,18 +399,17 @@ export default function BillTracker() {
     persistBudget(budgetIncomes, next);
   };
 
-  const currentMonth = new Date().getMonth() + 1;
-  const activeBills = bills.filter((b) => isBillActiveThisMonth(b, currentMonth));
-  const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, currentMonth));
+  const activeBills = bills.filter((b) => isBillActiveThisMonth(b, viewedMonth));
+  const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, viewedMonth));
   const unpaid = activeBills.filter((b) => !b.paid).sort((a, b) => a.dueDay - b.dueDay);
   const paid = activeBills.filter((b) => b.paid).sort((a, b) => a.dueDay - b.dueDay);
   const total = activeBills.reduce((sum, b) => sum + b.amount, 0);
   const paidTotal = activeBills.filter((b) => b.paid).reduce((sum, b) => sum + b.amount, 0);
   const remaining = total - paidTotal;
   const progressPct = total > 0 ? Math.round((paidTotal / total) * 100) : 0;
-  const today = new Date().getDate();
-  const nextBill = unpaid.find((b) => b.dueDay >= today) || (unpaid.length ? unpaid[0] : null);
-  const monthLabel = new Date().toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const today = realDay;
+  const nextBill = isCurrentMonth ? unpaid.find((b) => b.dueDay >= today) || (unpaid.length ? unpaid[0] : null) : null;
+  const monthLabel = `${MONTH_NAMES[viewedMonth - 1]} ${viewedYear}`;
 
   const totalIncome = budgetIncomes.reduce((s, i) => s + i.amount, 0);
   const otherExpensesTotal = budgetItems.reduce((s, i) => s + i.amount, 0);
@@ -327,47 +419,60 @@ export default function BillTracker() {
   const allocatedPct = totalIncome > 0 ? Math.round((totalExpenses / totalIncome) * 100) : 0;
   const leftoverColor = leftover >= 0 ? "#6E8F6C" : "#A8492C";
 
-  const BillRow = ({ bill }) => (
-    <div className="relative card row-shadow rounded-2xl overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: bill.paid ? "#6E8F6C" : "#C15F3C" }} />
-      <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
-        <button onClick={() => togglePaid(bill.id)} className="shrink-0 flex items-center justify-center active:opacity-60" style={{ width: 64 }}>
-          <span
-            className="rounded-full flex items-center justify-center"
-            style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : "2px solid #E5D9CF", backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff" }}
+  const BillRow = ({ bill }) => {
+    const pastDue = isCurrentMonth && !bill.paid && isBillActiveThisMonth(bill, viewedMonth) && bill.dueDay <= today;
+    const PAST_DUE_RED = "#D6392E";
+    const accentColor = bill.paid ? "#6E8F6C" : pastDue ? PAST_DUE_RED : "#C15F3C";
+    return (
+      <div
+        className="relative card row-shadow rounded-2xl overflow-hidden"
+        style={pastDue ? { backgroundColor: "#FDEEEC", borderColor: "#F0C4BC" } : undefined}
+      >
+        <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: accentColor }} />
+        <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
+          <button
+            onClick={() => isCurrentMonth && togglePaid(bill.id)}
+            className="shrink-0 flex items-center justify-center active:opacity-60"
+            style={{ width: 64, opacity: isCurrentMonth ? 1 : 0.45, cursor: isCurrentMonth ? "pointer" : "default" }}
+            title={isCurrentMonth ? "" : "Switch to the current month to mark bills paid"}
           >
-            {bill.paid && <Check size={15} color="#ffffff" strokeWidth={3} />}
-          </span>
-        </button>
-        <div className="flex-1 py-3.5 pr-2 min-w-0">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="font-semibold truncate" style={{ color: bill.paid ? "#A39D8E" : "#2D2A26", textDecoration: bill.paid ? "line-through" : "none" }}>
-                {bill.name}
+            <span
+              className="rounded-full flex items-center justify-center"
+              style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : `2px solid ${pastDue ? PAST_DUE_RED : "#E5D9CF"}`, backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff" }}
+            >
+              {bill.paid && <Check size={15} color="#ffffff" strokeWidth={3} />}
+            </span>
+          </button>
+          <div className="flex-1 py-3.5 pr-2 min-w-0">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-semibold truncate" style={{ color: bill.paid ? "#A39D8E" : "#2D2A26", textDecoration: bill.paid ? "line-through" : "none" }}>
+                  {bill.name}
+                </div>
+                <div style={{ fontSize: 12, marginTop: 2, color: pastDue ? PAST_DUE_RED : "#8C8577" }}>
+                  Due the {ordinal(bill.dueDay)} · {bill.paymentType}
+                  {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
+                </div>
               </div>
-              <div className="text-muted" style={{ fontSize: 12, marginTop: 2 }}>
-                Due the {ordinal(bill.dueDay)} · {bill.paymentType}
-                {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
+              <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: bill.paid ? "#A39D8E" : pastDue ? PAST_DUE_RED : "#2D2A26" }}>
+                ${bill.amount.toFixed(2)}
               </div>
-            </div>
-            <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: bill.paid ? "#A39D8E" : "#2D2A26" }}>
-              ${bill.amount.toFixed(2)}
             </div>
           </div>
+          {editMode && (
+            <div className="flex flex-col border-hair" style={{ borderLeftWidth: 1, borderLeftStyle: "solid" }}>
+              <button onClick={() => openEdit(bill)} className="flex-1 px-3 flex items-center justify-center active:bg-black/5" style={{ color: "#B5AFA1" }}>
+                <Pencil size={14} />
+              </button>
+              <button onClick={() => deleteBill(bill.id)} className="flex-1 px-3 flex items-center justify-center border-hair active:bg-black/5" style={{ color: "#B5AFA1", borderTopWidth: 1, borderTopStyle: "solid" }}>
+                <Trash2 size={14} />
+              </button>
+            </div>
+          )}
         </div>
-        {editMode && (
-          <div className="flex flex-col border-hair" style={{ borderLeftWidth: 1, borderLeftStyle: "solid" }}>
-            <button onClick={() => openEdit(bill)} className="flex-1 px-3 flex items-center justify-center active:bg-black/5" style={{ color: "#B5AFA1" }}>
-              <Pencil size={14} />
-            </button>
-            <button onClick={() => deleteBill(bill.id)} className="flex-1 px-3 flex items-center justify-center border-hair active:bg-black/5" style={{ color: "#B5AFA1", borderTopWidth: 1, borderTopStyle: "solid" }}>
-              <Trash2 size={14} />
-            </button>
-          </div>
-        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const SimpleRow = ({ name, amount, onEdit, onDelete, accent }) => (
     <div className="relative card row-shadow rounded-2xl overflow-hidden">
@@ -404,7 +509,6 @@ export default function BillTracker() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-muted card" style={{ fontSize: 12, fontWeight: 500, padding: "4px 10px", borderRadius: 999 }}>{monthLabel}</span>
           <button
             onClick={() => setEditMode((e) => !e)}
             className={editMode ? "btn-gradient" : "card"}
@@ -418,6 +522,52 @@ export default function BillTracker() {
           </button>
         </div>
       </div>
+
+      <div className="px-5 mt-3 flex items-center justify-center gap-3">
+        <button onClick={goPrevMonth} className="card flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 999, color: "#5B564C" }}>
+          <ChevronLeft size={16} />
+        </button>
+        <span className="font-display" style={{ fontSize: 15, fontWeight: 600, color: "#2D2A26", minWidth: 140, textAlign: "center" }}>
+          {monthLabel}
+        </span>
+        <button onClick={goNextMonth} className="card flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 999, color: "#5B564C" }}>
+          <ChevronRight size={16} />
+        </button>
+      </div>
+      {!isCurrentMonth && (
+        <div className="px-5 mt-2 flex items-center justify-center">
+          <button onClick={goToday} style={{ fontSize: 12, fontWeight: 600, color: "#C15F3C" }}>
+            Jump back to today
+          </button>
+        </div>
+      )}
+      {!isCurrentMonth && (
+        <div className="mx-5 mt-2 card flex items-center gap-2" style={{ borderRadius: 12, padding: "8px 12px" }}>
+          <span className="text-muted" style={{ fontSize: 11 }}>
+            Previewing {monthLabel} — paid checkboxes are locked here since paid status only tracks your current bill cycle.
+          </span>
+        </div>
+      )}
+
+      {notifStatus === "default" && (
+        <div className="mx-5 mt-3 card flex items-center justify-between" style={{ borderRadius: 14, padding: "10px 14px" }}>
+          <div className="flex items-center gap-2">
+            <Bell size={15} color="#C15F3C" />
+            <span style={{ fontSize: 12, color: "#5B564C" }}>Get notified when a bill is due</span>
+          </div>
+          <button onClick={enableNotifications} className="btn-gradient" style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 999, color: "#ffffff" }}>
+            Enable
+          </button>
+        </div>
+      )}
+      {notifStatus === "denied" && (
+        <div className="mx-5 mt-3 card flex items-center gap-2" style={{ borderRadius: 14, padding: "10px 14px" }}>
+          <BellOff size={15} color="#8C8577" />
+          <span className="text-muted" style={{ fontSize: 12 }}>
+            Notifications are blocked — enable them for this app in your phone's Settings if you'd like reminders.
+          </span>
+        </div>
+      )}
 
       <div className="px-5 mt-4">
         <div className="card flex" style={{ borderRadius: 14, padding: 4 }}>
