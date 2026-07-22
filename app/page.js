@@ -401,10 +401,11 @@ export default function BillTracker() {
 
   const activeBills = bills.filter((b) => isBillActiveThisMonth(b, viewedMonth));
   const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, viewedMonth));
-  const unpaid = activeBills.filter((b) => !b.paid).sort((a, b) => a.dueDay - b.dueDay);
-  const paid = activeBills.filter((b) => b.paid).sort((a, b) => a.dueDay - b.dueDay);
+  const isPaidForView = (b) => b.paid && isCurrentMonth;
+  const unpaid = activeBills.filter((b) => !isPaidForView(b)).sort((a, b) => a.dueDay - b.dueDay);
+  const paid = activeBills.filter((b) => isPaidForView(b)).sort((a, b) => a.dueDay - b.dueDay);
   const total = activeBills.reduce((sum, b) => sum + b.amount, 0);
-  const paidTotal = activeBills.filter((b) => b.paid).reduce((sum, b) => sum + b.amount, 0);
+  const paidTotal = activeBills.filter((b) => isPaidForView(b)).reduce((sum, b) => sum + b.amount, 0);
   const remaining = total - paidTotal;
   const progressPct = total > 0 ? Math.round((paidTotal / total) * 100) : 0;
   const today = realDay;
@@ -420,9 +421,10 @@ export default function BillTracker() {
   const leftoverColor = leftover >= 0 ? "#6E8F6C" : "#A8492C";
 
   const BillRow = ({ bill }) => {
-    const pastDue = isCurrentMonth && !bill.paid && isBillActiveThisMonth(bill, viewedMonth) && bill.dueDay <= today;
+    const paidForView = bill.paid && isCurrentMonth;
+    const pastDue = isCurrentMonth && !paidForView && isBillActiveThisMonth(bill, viewedMonth) && bill.dueDay <= today;
     const PAST_DUE_RED = "#D6392E";
-    const accentColor = bill.paid ? "#6E8F6C" : pastDue ? PAST_DUE_RED : "#C15F3C";
+    const accentColor = paidForView ? "#6E8F6C" : pastDue ? PAST_DUE_RED : "#C15F3C";
     return (
       <div
         className="relative card row-shadow rounded-2xl overflow-hidden"
@@ -438,15 +440,15 @@ export default function BillTracker() {
           >
             <span
               className="rounded-full flex items-center justify-center"
-              style={{ width: 28, height: 28, border: bill.paid ? "2px solid #6E8F6C" : `2px solid ${pastDue ? PAST_DUE_RED : "#E5D9CF"}`, backgroundColor: bill.paid ? "#6E8F6C" : "#ffffff" }}
+              style={{ width: 28, height: 28, border: paidForView ? "2px solid #6E8F6C" : `2px solid ${pastDue ? PAST_DUE_RED : "#E5D9CF"}`, backgroundColor: paidForView ? "#6E8F6C" : "#ffffff" }}
             >
-              {bill.paid && <Check size={15} color="#ffffff" strokeWidth={3} />}
+              {paidForView && <Check size={15} color="#ffffff" strokeWidth={3} />}
             </span>
           </button>
           <div className="flex-1 py-3.5 pr-2 min-w-0">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="font-semibold truncate" style={{ color: bill.paid ? "#A39D8E" : "#2D2A26", textDecoration: bill.paid ? "line-through" : "none" }}>
+                <div className="font-semibold truncate" style={{ color: paidForView ? "#A39D8E" : "#2D2A26", textDecoration: paidForView ? "line-through" : "none" }}>
                   {bill.name}
                 </div>
                 <div style={{ fontSize: 12, marginTop: 2, color: pastDue ? PAST_DUE_RED : "#8C8577" }}>
@@ -454,7 +456,7 @@ export default function BillTracker() {
                   {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
                 </div>
               </div>
-              <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: bill.paid ? "#A39D8E" : pastDue ? PAST_DUE_RED : "#2D2A26" }}>
+              <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: paidForView ? "#A39D8E" : pastDue ? PAST_DUE_RED : "#2D2A26" }}>
                 ${bill.amount.toFixed(2)}
               </div>
             </div>
