@@ -24,6 +24,8 @@ export const viewport = {
   width: "device-width",
   initialScale: 1,
   maximumScale: 1,
+  // Required for env(safe-area-inset-*) to return real values on iPhone.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }) {

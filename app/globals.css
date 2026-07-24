@@ -34,7 +34,7 @@ svg, .ring, .ring svg, .hdr-badge { outline: none !important; }
 .eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); }
 
 /* shell */
-.app { min-height: 100vh; padding-bottom: 92px; background: #FAF9F5; color: #2D2A26; }
+.app { min-height: 100vh; padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); background: #FAF9F5; color: #2D2A26; }
 .wrap { padding: 0 20px; }
 
 /* header */
@@ -127,12 +127,18 @@ svg, .ring, .ring svg, .hdr-badge { outline: none !important; }
 .btn-accent { background: linear-gradient(to right, var(--accent), var(--accent-2)); color: #fff; border-radius: 999px; padding: 7px 13px; font-size: 12px; font-weight: 600; flex: 0 0 auto; }
 
 /* bottom nav */
-.nav { position: fixed; left: 0; right: 0; bottom: 0; display: flex; background: rgba(250,249,245,0.98); backdrop-filter: blur(10px); border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); z-index: 10; }
-.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0 9px; color: var(--muted); }
+.nav {
+  position: fixed; left: 0; right: 0; bottom: 0; display: flex;
+  background: rgba(250,249,245,0.98); backdrop-filter: blur(10px);
+  border-top: 1px solid var(--line); z-index: 10;
+  /* Keep tap targets above the iPhone home indicator so they don't fight the swipe-up gesture. */
+  padding-bottom: max(env(safe-area-inset-bottom, 0px), 10px);
+}
+.nav-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 0 7px; color: var(--muted); }
 .nav-item.on { color: var(--accent); }
 .nav-label { font-size: 10px; font-weight: 600; }
 
-.saving { position: fixed; bottom: 80px; left: 0; right: 0; text-align: center; pointer-events: none; z-index: 9; }
+.saving { position: fixed; bottom: calc(84px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; text-align: center; pointer-events: none; z-index: 9; }
 .saving span { background: rgba(250,249,245,0.92); padding: 0 8px; font-size: 11px; color: var(--muted); }
 
 /* sheets */

@@ -96,6 +96,18 @@ const relativeDateLabel = (iso, todayISO) => {
   return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}${withYear ? ` ${d.getFullYear()}` : ""}`;
 };
 
+// The single rule behind the home-screen badge. The cron job in
+// app/api/cron/check-bills/route.js mirrors this exactly so the two never disagree.
+const countNeedsAttention = (bills, reminders, day, month, todayISO) => {
+  const billsDue = bills.filter(
+    (b) => !b.paid && isBillActiveThisMonth(b, month) && b.dueDay <= day
+  ).length;
+  const remindersDue = reminders.filter(
+    (r) => (r.repeatUnit || !r.done) && r.dueDate <= todayISO
+  ).length;
+  return billsDue + remindersDue;
+};
+
 const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc.", frequencyMonths: 1, anchorMonth: new Date().getMonth() + 1 };
 const emptySimpleForm = { name: "", amount: "" };
 const emptyReminderForm = { name: "", dueDate: toISODate(new Date()), dueTime: "09:00", repeatValue: null, repeatUnit: null };
@@ -243,15 +255,14 @@ export default function HomeHub() {
 
   useEffect(() => {
     if (typeof window === "undefined" || !("setAppBadge" in navigator)) return;
-    const d = new Date().getDate();
-    const m = new Date().getMonth() + 1;
-    const iso = toISODate(new Date());
-    const billsWaiting = bills.filter((b) => !b.paid && isBillActiveThisMonth(b, m) && b.dueDay <= d).length;
-    const remindersWaiting = reminders.filter((r) => (r.repeatUnit || !r.done) && r.dueDate <= iso).length;
-    const waiting = billsWaiting + remindersWaiting;
+    if (loading || remindersLoading) return; // don't badge off half-loaded data
+    const now = new Date();
+    const waiting = countNeedsAttention(
+      bills, reminders, now.getDate(), now.getMonth() + 1, toISODate(now)
+    );
     if (waiting > 0) navigator.setAppBadge(waiting).catch(() => {});
     else if ("clearAppBadge" in navigator) navigator.clearAppBadge().catch(() => {});
-  }, [bills, reminders]);
+  }, [bills, reminders, loading, remindersLoading]);
 
   // Pull the latest from the shared database whenever the app comes back into
   // view, and every 45s while it's open, so both phones stay in step.
@@ -403,6 +414,7 @@ export default function HomeHub() {
     ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
   ].sort((a, b) => b.amount - a.amount);
 
+  const needsAttention = countNeedsAttention(bills, reminders, realDay, realMonth, todayISO);
   const pendingReminders = reminders.filter((r) => r.repeatUnit || !r.done).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const completedReminders = reminders.filter((r) => !r.repeatUnit && r.done).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
   const groupedReminders = GROUP_ORDER.map((label) => ({
@@ -493,7 +505,11 @@ export default function HomeHub() {
           </div>
           <div>
             <div className="hdr-title">Home Hub</div>
-            <div className="hdr-sub">{activeTab ? activeTab.label : ""}</div>
+            <div className="hdr-sub">
+              {needsAttention > 0
+                ? `${needsAttention} need${needsAttention === 1 ? "s" : ""} attention`
+                : "All caught up"}
+            </div>
           </div>
         </div>
         <div className="hdr-actions">

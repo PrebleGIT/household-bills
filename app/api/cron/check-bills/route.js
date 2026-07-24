@@ -69,7 +69,8 @@ export async function GET(request) {
       !alreadySent.has(`rem:${r.id}`)
   );
 
-  // Badge reflects everything still waiting, whether or not it notified yet.
+  // Must match countNeedsAttention() in app/page.js exactly, or the badge will
+  // disagree with what the app shows.
   const waitingCount =
     activeUnpaidBills.filter((b) => b.dueDay <= today).length +
     reminders.filter((r) => (r.repeatUnit || !r.done) && r.dueDate <= todayISO).length;
