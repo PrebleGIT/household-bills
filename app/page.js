@@ -471,7 +471,8 @@ export default function HomeHub() {
   );
 
   const ReminderRow = ({ item }) => {
-    const pastDue = !item.done && item.dueDate < todayISO;
+    // Due today counts as needing attention, same as bills.
+    const pastDue = !item.done && item.dueDate <= todayISO;
     const cls = ["row", pastDue ? "is-alert" : "", item.done ? "is-done" : ""].filter(Boolean).join(" ");
     return (
       <div className={cls}>
