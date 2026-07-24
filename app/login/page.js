@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Wallet, Lock } from "lucide-react";
 
 export default function LoginPage() {
   const [password, setPassword] = useState("");
@@ -24,7 +23,7 @@ export default function LoginPage() {
         router.push("/");
         router.refresh();
       } else {
-        setError("Incorrect passcode. Try again.");
+        setError("That code didn't match. Try again.");
       }
     } catch (err) {
       setError("Couldn't reach the server. Check your connection.");
@@ -34,61 +33,30 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen bg-cream flex items-center justify-center px-6">
-      <div className="w-full max-w-sm">
-        <div className="flex flex-col items-center mb-8">
-          <div
-            className="icon-gradient rounded-2xl flex items-center justify-center mb-4"
-            style={{ width: 56, height: 56 }}
-          >
-            <Wallet size={26} color="#ffffff" strokeWidth={2.2} />
-          </div>
-          <h1 className="font-display" style={{ fontSize: 26, fontWeight: 700, color: "#2D2A26" }}>
-            Bills
-          </h1>
-          <p className="text-muted" style={{ fontSize: 13, marginTop: 4 }}>
-            Enter the passcode to continue
-          </p>
-        </div>
+    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
+      <form onSubmit={submit} style={{ width: "100%", maxWidth: 320 }}>
+        <div className="eyebrow">Home Hub</div>
+        <h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em", margin: "8px 0 26px" }}>
+          Enter your code
+        </h1>
 
-        <form onSubmit={submit} className="card card-shadow" style={{ borderRadius: 20, padding: 20 }}>
-          <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>
-            Passcode
-          </label>
-          <div className="flex items-center gap-2 input-field rounded-xl px-3 py-3 mt-1">
-            <Lock size={15} color="#8C8577" />
-            <input
-              type="password"
-              inputMode="text"
-              autoFocus
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="flex-1 bg-transparent outline-none"
-              style={{ color: "#2D2A26" }}
-            />
-          </div>
+        <input
+          className="input"
+          type="password"
+          inputMode="numeric"
+          autoFocus
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          placeholder="••••••"
+          style={{ textAlign: "center", letterSpacing: "0.3em", fontSize: 18, padding: "14px 12px" }}
+        />
 
-          {error && (
-            <p style={{ color: "#A8492C", fontSize: 13, marginTop: 8 }}>{error}</p>
-          )}
+        {error && <div className="notice-err" style={{ marginTop: 12 }}>{error}</div>}
 
-          <button
-            type="submit"
-            disabled={loading || !password}
-            className="btn-gradient w-full mt-4 rounded-xl"
-            style={{
-              padding: "12px 0",
-              color: "#ffffff",
-              fontSize: 14,
-              fontWeight: 600,
-              opacity: loading || !password ? 0.5 : 1,
-            }}
-          >
-            {loading ? "Checking…" : "Unlock"}
-          </button>
-        </form>
-      </div>
+        <button type="submit" className="btn-primary" disabled={loading || !password} style={{ marginTop: 14 }}>
+          {loading ? "Checking…" : "Unlock"}
+        </button>
+      </form>
     </div>
   );
 }

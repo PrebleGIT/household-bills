@@ -1,6 +1,6 @@
 {
-  "name": "Bills - Household Tracker",
-  "short_name": "Bills",
+  "name": "Home Hub - Bills, Budget & Household Tasks",
+  "short_name": "Home Hub",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#FAF9F5",

@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff } from "lucide-react";
+import {
+  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare,
+  ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff,
+} from "lucide-react";
 
 function urlBase64ToUint8Array(base64String) {
   const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -12,12 +15,31 @@ function urlBase64ToUint8Array(base64String) {
 
 const PAYMENT_TYPES = ["Bank Acc.", "Autopay", "Check", "Cash", "Credit Card"];
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const FREQUENCIES = [
   { label: "Monthly", value: 1 },
   { label: "Every 3 Mo", value: 3 },
   { label: "Every 6 Mo", value: 6 },
   { label: "Yearly", value: 12 },
 ];
+const TABS = [
+  { key: "bills", label: "Bills", icon: Wallet },
+  { key: "budget", label: "Budget", icon: PieChart },
+  { key: "reminders", label: "Reminders", icon: CheckSquare },
+];
+const REPEAT_OPTIONS = [
+  { label: "None", value: null, unit: null },
+  { label: "Weekly", value: 1, unit: "weeks" },
+  { label: "Bi-Weekly", value: 2, unit: "weeks" },
+  { label: "Monthly", value: 1, unit: "months" },
+  { label: "Quarterly", value: 3, unit: "months" },
+  { label: "Every 4 Mo", value: 4, unit: "months" },
+  { label: "Every 6 Mo", value: 6, unit: "months" },
+  { label: "Yearly", value: 1, unit: "years" },
+  { label: "Every 2 Yr", value: 2, unit: "years" },
+];
+
+const money = (n) => `$${n.toFixed(2)}`;
 
 const ordinal = (n) => {
   const s = ["th", "st", "nd", "rd"];
@@ -25,13 +47,11 @@ const ordinal = (n) => {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 };
 
-// A bill is "active" this month if it's monthly, or if this month falls on
-// its recurring cycle counting from its anchor month.
-const isBillActiveThisMonth = (bill, currentMonth) => {
+const isBillActiveThisMonth = (bill, month) => {
   const freq = bill.frequencyMonths || 1;
   if (freq <= 1) return true;
-  const anchor = bill.anchorMonth || currentMonth;
-  const diff = ((currentMonth - anchor) % freq + freq) % freq;
+  const anchor = bill.anchorMonth || month;
+  const diff = ((month - anchor) % freq + freq) % freq;
   return diff === 0;
 };
 
@@ -40,88 +60,94 @@ const dueMonthsLabel = (frequencyMonths, anchorMonth) => {
   const months = [];
   for (let m = 1; m <= 12; m++) {
     if (((m - anchorMonth) % frequencyMonths + frequencyMonths) % frequencyMonths === 0) {
-      months.push(MONTH_NAMES[m - 1].slice(0, 3));
+      months.push(MONTH_SHORT[m - 1]);
     }
   }
-  return "Due in: " + months.join(", ");
+  return months.join(" · ");
+};
+
+const pad2 = (n) => String(n).padStart(2, "0");
+const toISODate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const parseISODate = (iso) => {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+};
+const addInterval = (iso, value, unit) => {
+  const d = parseISODate(iso);
+  if (unit === "weeks") d.setDate(d.getDate() + value * 7);
+  else if (unit === "months") d.setMonth(d.getMonth() + value);
+  else if (unit === "years") d.setFullYear(d.getFullYear() + value);
+  return toISODate(d);
+};
+const repeatLabelFor = (value, unit) => {
+  const match = REPEAT_OPTIONS.find((o) => o.value === value && o.unit === unit);
+  return match ? match.label : "One-time";
+};
+const groupLabelFor = (r) => (r.repeatUnit ? repeatLabelFor(r.repeatValue, r.repeatUnit) : "One-time");
+const GROUP_ORDER = [...REPEAT_OPTIONS.slice(1).map((o) => o.label), "One-time"];
+const relativeDateLabel = (iso, todayISO) => {
+  const d = parseISODate(iso);
+  const today = parseISODate(todayISO);
+  const diffDays = Math.round((d - today) / 86400000);
+  if (diffDays === 0) return "Today";
+  if (diffDays === 1) return "Tomorrow";
+  if (diffDays === -1) return "Yesterday";
+  const withYear = d.getFullYear() !== today.getFullYear();
+  return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}${withYear ? ` ${d.getFullYear()}` : ""}`;
 };
 
 const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc.", frequencyMonths: 1, anchorMonth: new Date().getMonth() + 1 };
 const emptySimpleForm = { name: "", amount: "" };
+const emptyReminderForm = { name: "", dueDate: toISODate(new Date()), dueTime: "09:00", repeatValue: null, repeatUnit: null };
 
-function ProgressRing({ pct, label = "Paid" }) {
-  const r = 52;
-  const c = 2 * Math.PI * r;
-  const offset = c - (Math.min(100, Math.max(0, pct)) / 100) * c;
+const formatTime = (t) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map(Number);
+  const suffix = h >= 12 ? "PM" : "AM";
+  const hour = h % 12 === 0 ? 12 : h % 12;
+  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
+};
+
+function Ring({ pct, label, tone }) {
+  const clamped = Math.min(100, Math.max(0, pct));
+  const deg = (clamped / 100) * 360;
+  const fill = tone
+    ? `conic-gradient(${tone} 0deg ${deg}deg, #F0EDE5 ${deg}deg 360deg)`
+    : `conic-gradient(#C15F3C 0deg, #D9825C ${deg}deg, #F0EDE5 ${deg}deg 360deg)`;
   return (
-    <div className="relative shrink-0" style={{ width: 132, height: 132 }}>
-      <svg width="132" height="132" viewBox="0 0 132 132" className="-rotate-90">
-        <defs>
-          <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#C15F3C" />
-            <stop offset="100%" stopColor="#D9825C" />
-          </linearGradient>
-        </defs>
-        <circle cx="66" cy="66" r={r} fill="none" stroke="#F0EDE5" strokeWidth="11" />
-        <circle
-          cx="66"
-          cy="66"
-          r={r}
-          fill="none"
-          stroke="url(#ringGrad)"
-          strokeWidth="11"
-          strokeLinecap="round"
-          strokeDasharray={c}
-          strokeDashoffset={offset}
-          style={{ transition: "stroke-dashoffset 0.5s ease-out" }}
-        />
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="font-display tabular leading-none" style={{ fontSize: 28, fontWeight: 700, color: "#2D2A26" }}>
-          {pct}%
-        </span>
-        <span className="text-muted" style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5, marginTop: 4 }}>
-          {label}
-        </span>
+    <div className="ring" aria-hidden="true">
+      <div className="ring-dial" style={{ background: fill }} />
+      <div className="ring-hole" />
+      <div className="ring-center">
+        <span className="ring-num">{clamped}%</span>
+        <span className="ring-label">{label}</span>
       </div>
     </div>
   );
 }
 
-export default function BillTracker() {
+export default function HomeHub() {
   const [view, setView] = useState("bills");
   const [editMode, setEditMode] = useState(false);
-  const [notifStatus, setNotifStatus] = useState("unknown"); // unknown | unsupported | default | granted | denied
+  const [notifStatus, setNotifStatus] = useState("unknown");
 
   const realNow = new Date();
   const realMonth = realNow.getMonth() + 1;
   const realYear = realNow.getFullYear();
   const realDay = realNow.getDate();
+  const todayISO = toISODate(realNow);
 
   const [viewedMonth, setViewedMonth] = useState(realMonth);
   const [viewedYear, setViewedYear] = useState(realYear);
   const isCurrentMonth = viewedMonth === realMonth && viewedYear === realYear;
 
   const goPrevMonth = () => {
-    if (viewedMonth === 1) {
-      setViewedMonth(12);
-      setViewedYear((y) => y - 1);
-    } else {
-      setViewedMonth((m) => m - 1);
-    }
+    if (viewedMonth === 1) { setViewedMonth(12); setViewedYear((y) => y - 1); } else { setViewedMonth((m) => m - 1); }
   };
   const goNextMonth = () => {
-    if (viewedMonth === 12) {
-      setViewedMonth(1);
-      setViewedYear((y) => y + 1);
-    } else {
-      setViewedMonth((m) => m + 1);
-    }
+    if (viewedMonth === 12) { setViewedMonth(1); setViewedYear((y) => y + 1); } else { setViewedMonth((m) => m + 1); }
   };
-  const goToday = () => {
-    setViewedMonth(realMonth);
-    setViewedYear(realYear);
-  };
+  const goToday = () => { setViewedMonth(realMonth); setViewedYear(realYear); };
 
   const [bills, setBills] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -139,32 +165,35 @@ export default function BillTracker() {
   const [budgetLoading, setBudgetLoading] = useState(true);
   const [budgetSaving, setBudgetSaving] = useState(false);
   const [budgetError, setBudgetError] = useState(null);
-
   const [showIncomeForm, setShowIncomeForm] = useState(false);
   const [editingIncomeId, setEditingIncomeId] = useState(null);
   const [incomeForm, setIncomeForm] = useState(emptySimpleForm);
-
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
   const [itemForm, setItemForm] = useState(emptySimpleForm);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const [reminders, setReminders] = useState([]);
+  const [remindersLoading, setRemindersLoading] = useState(true);
+  const [remindersSaving, setRemindersSaving] = useState(false);
+  const [remindersError, setRemindersError] = useState(null);
+  const [showReminderForm, setShowReminderForm] = useState(false);
+  const [editingReminderId, setEditingReminderId] = useState(null);
+  const [reminderForm, setReminderForm] = useState(emptyReminderForm);
+  const [showCompleted, setShowCompleted] = useState(false);
+
+  const load = useCallback(async (quiet) => {
+    if (!quiet) setLoading(true);
     setError(null);
     try {
       const res = await fetch("/api/bills", { cache: "no-store" });
       if (!res.ok) throw new Error("failed");
-      const data = await res.json();
-      setBills(data);
-    } catch (e) {
-      setError("Couldn't load bills. Check your connection and try again.");
-    } finally {
-      setLoading(false);
-    }
+      setBills(await res.json());
+    } catch (e) { setError("Bills didn't load. Check your connection and pull down to retry."); }
+    finally { setLoading(false); }
   }, []);
 
-  const loadBudget = useCallback(async () => {
-    setBudgetLoading(true);
+  const loadBudget = useCallback(async (quiet) => {
+    if (!quiet) setBudgetLoading(true);
     setBudgetError(null);
     try {
       const res = await fetch("/api/budget", { cache: "no-store" });
@@ -172,240 +201,191 @@ export default function BillTracker() {
       const data = await res.json();
       setBudgetIncomes(data.incomes || []);
       setBudgetItems(data.items || []);
-    } catch (e) {
-      setBudgetError("Couldn't load budget. Check your connection and try again.");
-    } finally {
-      setBudgetLoading(false);
-    }
+    } catch (e) { setBudgetError("Budget didn't load. Check your connection and pull down to retry."); }
+    finally { setBudgetLoading(false); }
   }, []);
 
-  useEffect(() => {
-    load();
-    loadBudget();
-  }, [load, loadBudget]);
+  const loadReminders = useCallback(async (quiet) => {
+    if (!quiet) setRemindersLoading(true);
+    setRemindersError(null);
+    try {
+      const res = await fetch("/api/reminders", { cache: "no-store" });
+      if (!res.ok) throw new Error("failed");
+      setReminders(await res.json());
+    } catch (e) { setRemindersError("Reminders didn't load. Check your connection and pull down to retry."); }
+    finally { setRemindersLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); loadBudget(); loadReminders(); }, [load, loadBudget, loadReminders]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
-      setNotifStatus("unsupported");
-      return;
+      setNotifStatus("unsupported"); return;
     }
     navigator.serviceWorker.register("/sw.js").catch(() => {});
-    setNotifStatus(Notification.permission); // "default" | "granted" | "denied"
+    setNotifStatus(Notification.permission);
   }, []);
 
   const enableNotifications = async () => {
     try {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        setNotifStatus("unsupported");
-        return;
-      }
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) { setNotifStatus("unsupported"); return; }
       const permission = await Notification.requestPermission();
       setNotifStatus(permission);
       if (permission !== "granted") return;
-
       const reg = await navigator.serviceWorker.ready;
       const publicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-      if (!publicKey) {
-        setNotifStatus("unsupported");
-        return;
-      }
-      const subscription = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      await fetch("/api/push/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(subscription),
-      });
-    } catch (e) {
-      // Leave notifStatus as whatever Notification.permission reported.
-    }
+      if (!publicKey) { setNotifStatus("unsupported"); return; }
+      const subscription = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
+      await fetch("/api/push/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(subscription) });
+    } catch (e) {}
   };
 
-  // Keep the home-screen icon badge in sync with what's actually still unpaid.
   useEffect(() => {
     if (typeof window === "undefined" || !("setAppBadge" in navigator)) return;
-    const today = new Date().getDate();
-    const currentMonth = new Date().getMonth() + 1;
-    const waitingCount = bills.filter(
-      (b) => !b.paid && isBillActiveThisMonth(b, currentMonth) && b.dueDay <= today
-    ).length;
-    if (waitingCount > 0) {
-      navigator.setAppBadge(waitingCount).catch(() => {});
-    } else if ("clearAppBadge" in navigator) {
-      navigator.clearAppBadge().catch(() => {});
-    }
-  }, [bills]);
+    const d = new Date().getDate();
+    const m = new Date().getMonth() + 1;
+    const iso = toISODate(new Date());
+    const billsWaiting = bills.filter((b) => !b.paid && isBillActiveThisMonth(b, m) && b.dueDay <= d).length;
+    const remindersWaiting = reminders.filter((r) => (r.repeatUnit || !r.done) && r.dueDate <= iso).length;
+    const waiting = billsWaiting + remindersWaiting;
+    if (waiting > 0) navigator.setAppBadge(waiting).catch(() => {});
+    else if ("clearAppBadge" in navigator) navigator.clearAppBadge().catch(() => {});
+  }, [bills, reminders]);
+
+  // Pull the latest from the shared database whenever the app comes back into
+  // view, and every 45s while it's open, so both phones stay in step.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const refresh = () => {
+      if (document.visibilityState !== "visible") return;
+      load(true); loadBudget(true); loadReminders(true);
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    const timer = setInterval(refresh, 45000);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      clearInterval(timer);
+    };
+  }, [load, loadBudget, loadReminders]);
 
   const persist = async (next) => {
-    setBills(next);
-    setSaving(true);
-    setError(null);
+    setBills(next); setSaving(true); setError(null);
     try {
-      const res = await fetch("/api/bills", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(next),
-      });
+      const res = await fetch("/api/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
       if (!res.ok) throw new Error("failed");
-    } catch (e) {
-      setError("Couldn't save. Check your connection and try again.");
-    } finally {
-      setSaving(false);
-    }
+    } catch (e) { setError("That change didn't save. Check your connection and try again."); }
+    finally { setSaving(false); }
   };
 
   const persistBudget = async (incomes, items) => {
-    setBudgetIncomes(incomes);
-    setBudgetItems(items);
-    setBudgetSaving(true);
-    setBudgetError(null);
+    setBudgetIncomes(incomes); setBudgetItems(items); setBudgetSaving(true); setBudgetError(null);
     try {
-      const res = await fetch("/api/budget", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ incomes, items }),
-      });
+      const res = await fetch("/api/budget", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incomes, items }) });
       if (!res.ok) throw new Error("failed");
-    } catch (e) {
-      setBudgetError("Couldn't save. Check your connection and try again.");
-    } finally {
-      setBudgetSaving(false);
-    }
+    } catch (e) { setBudgetError("That change didn't save. Check your connection and try again."); }
+    finally { setBudgetSaving(false); }
   };
 
-  const logout = async () => {
-    await fetch("/api/logout", { method: "POST" });
-    window.location.href = "/login";
+  const persistReminders = async (next) => {
+    setReminders(next); setRemindersSaving(true); setRemindersError(null);
+    try {
+      const res = await fetch("/api/reminders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      if (!res.ok) throw new Error("failed");
+    } catch (e) { setRemindersError("That change didn't save. Check your connection and try again."); }
+    finally { setRemindersSaving(false); }
   };
 
-  const openAdd = () => {
-    setEditingId(null);
-    setForm(emptyBillForm);
-    setShowForm(true);
-  };
+  const logout = async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; };
+
+  const openAdd = () => { setEditingId(null); setForm(emptyBillForm); setShowForm(true); };
   const openEdit = (bill) => {
     setEditingId(bill.id);
-    setForm({
-      name: bill.name,
-      dueDay: String(bill.dueDay),
-      amount: String(bill.amount),
-      paymentType: bill.paymentType,
-      frequencyMonths: bill.frequencyMonths || 1,
-      anchorMonth: bill.anchorMonth || new Date().getMonth() + 1,
-    });
+    setForm({ name: bill.name, dueDay: String(bill.dueDay), amount: String(bill.amount), paymentType: bill.paymentType, frequencyMonths: bill.frequencyMonths || 1, anchorMonth: bill.anchorMonth || new Date().getMonth() + 1 });
     setShowForm(true);
   };
-  const closeForm = () => {
-    setShowForm(false);
-    setEditingId(null);
-    setForm(emptyBillForm);
-  };
+  const closeForm = () => { setShowForm(false); setEditingId(null); setForm(emptyBillForm); };
   const submitForm = () => {
     const name = form.name.trim();
+    if (!name) return;
     const dueDay = Math.min(31, Math.max(1, parseInt(form.dueDay, 10) || 1));
     const amount = parseFloat(form.amount) || 0;
     const frequencyMonths = form.frequencyMonths || 1;
     const anchorMonth = form.anchorMonth || new Date().getMonth() + 1;
-    if (!name) return;
     if (editingId) {
-      const next = bills.map((b) => (b.id === editingId ? { ...b, name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth } : b));
-      persist(next);
+      persist(bills.map((b) => (b.id === editingId ? { ...b, name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth } : b)));
     } else {
-      const next = [...bills, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth, paid: false }];
-      persist(next);
+      persist([...bills, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDay, amount, paymentType: form.paymentType, frequencyMonths, anchorMonth, paid: false }]);
     }
     closeForm();
   };
-  const togglePaid = (id) => {
-    const next = bills.map((b) => (b.id === id ? { ...b, paid: !b.paid } : b));
-    persist(next);
-  };
-  const deleteBill = (id) => {
-    const next = bills.filter((b) => b.id !== id);
-    persist(next);
-  };
-  const resetMonth = () => {
-    const next = bills.map((b) => ({ ...b, paid: false }));
-    persist(next);
-    setConfirmReset(false);
-  };
+  const togglePaid = (id) => persist(bills.map((b) => (b.id === id ? { ...b, paid: !b.paid } : b)));
+  const deleteBill = (id) => persist(bills.filter((b) => b.id !== id));
+  const resetMonth = () => { persist(bills.map((b) => ({ ...b, paid: false }))); setConfirmReset(false); };
 
-  const openAddIncome = () => {
-    setEditingIncomeId(null);
-    setIncomeForm(emptySimpleForm);
-    setShowIncomeForm(true);
-  };
-  const openEditIncome = (inc) => {
-    setEditingIncomeId(inc.id);
-    setIncomeForm({ name: inc.name, amount: String(inc.amount) });
-    setShowIncomeForm(true);
-  };
-  const closeIncomeForm = () => {
-    setShowIncomeForm(false);
-    setEditingIncomeId(null);
-    setIncomeForm(emptySimpleForm);
-  };
+  const openAddIncome = () => { setEditingIncomeId(null); setIncomeForm(emptySimpleForm); setShowIncomeForm(true); };
+  const openEditIncome = (inc) => { setEditingIncomeId(inc.id); setIncomeForm({ name: inc.name, amount: String(inc.amount) }); setShowIncomeForm(true); };
+  const closeIncomeForm = () => { setShowIncomeForm(false); setEditingIncomeId(null); setIncomeForm(emptySimpleForm); };
   const submitIncomeForm = () => {
     const name = incomeForm.name.trim();
-    const amount = parseFloat(incomeForm.amount) || 0;
     if (!name) return;
-    if (editingIncomeId) {
-      const next = budgetIncomes.map((i) => (i.id === editingIncomeId ? { ...i, name, amount } : i));
-      persistBudget(next, budgetItems);
-    } else {
-      const next = [...budgetIncomes, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, amount }];
-      persistBudget(next, budgetItems);
-    }
+    const amount = parseFloat(incomeForm.amount) || 0;
+    if (editingIncomeId) persistBudget(budgetIncomes.map((i) => (i.id === editingIncomeId ? { ...i, name, amount } : i)), budgetItems);
+    else persistBudget([...budgetIncomes, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, amount }], budgetItems);
     closeIncomeForm();
   };
-  const deleteIncome = (id) => {
-    const next = budgetIncomes.filter((i) => i.id !== id);
-    persistBudget(next, budgetItems);
-  };
+  const deleteIncome = (id) => persistBudget(budgetIncomes.filter((i) => i.id !== id), budgetItems);
 
-  const openAddItem = () => {
-    setEditingItemId(null);
-    setItemForm(emptySimpleForm);
-    setShowItemForm(true);
-  };
-  const openEditItem = (item) => {
-    setEditingItemId(item.id);
-    setItemForm({ name: item.name, amount: String(item.amount) });
-    setShowItemForm(true);
-  };
-  const closeItemForm = () => {
-    setShowItemForm(false);
-    setEditingItemId(null);
-    setItemForm(emptySimpleForm);
-  };
+  const openAddItem = () => { setEditingItemId(null); setItemForm(emptySimpleForm); setShowItemForm(true); };
+  const openEditItem = (item) => { setEditingItemId(item.id); setItemForm({ name: item.name, amount: String(item.amount) }); setShowItemForm(true); };
+  const closeItemForm = () => { setShowItemForm(false); setEditingItemId(null); setItemForm(emptySimpleForm); };
   const submitItemForm = () => {
     const name = itemForm.name.trim();
-    const amount = parseFloat(itemForm.amount) || 0;
     if (!name) return;
-    if (editingItemId) {
-      const next = budgetItems.map((i) => (i.id === editingItemId ? { ...i, name, amount } : i));
-      persistBudget(budgetIncomes, next);
-    } else {
-      const next = [...budgetItems, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, amount }];
-      persistBudget(budgetIncomes, next);
-    }
+    const amount = parseFloat(itemForm.amount) || 0;
+    if (editingItemId) persistBudget(budgetIncomes, budgetItems.map((i) => (i.id === editingItemId ? { ...i, name, amount } : i)));
+    else persistBudget(budgetIncomes, [...budgetItems, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, amount }]);
     closeItemForm();
   };
-  const deleteItem = (id) => {
-    const next = budgetItems.filter((i) => i.id !== id);
-    persistBudget(budgetIncomes, next);
+  const deleteItem = (id) => persistBudget(budgetIncomes, budgetItems.filter((i) => i.id !== id));
+
+  const openAddReminder = () => { setEditingReminderId(null); setReminderForm(emptyReminderForm); setShowReminderForm(true); };
+  const openEditReminder = (item) => {
+    setEditingReminderId(item.id);
+    setReminderForm({ name: item.name, dueDate: item.dueDate, dueTime: item.dueTime || "09:00", repeatValue: item.repeatValue, repeatUnit: item.repeatUnit });
+    setShowReminderForm(true);
   };
+  const closeReminderForm = () => { setShowReminderForm(false); setEditingReminderId(null); setReminderForm(emptyReminderForm); };
+  const submitReminderForm = () => {
+    const name = reminderForm.name.trim();
+    if (!name || !reminderForm.dueDate) return;
+    const { repeatValue, repeatUnit, dueDate } = reminderForm;
+    const dueTime = reminderForm.dueTime || "09:00";
+    if (editingReminderId) {
+      persistReminders(reminders.map((r) => (r.id === editingReminderId ? { ...r, name, dueDate, dueTime, repeatValue, repeatUnit } : r)));
+    } else {
+      persistReminders([...reminders, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDate, dueTime, repeatValue, repeatUnit, done: false }]);
+    }
+    closeReminderForm();
+  };
+  const toggleReminder = (id) => {
+    persistReminders(reminders.map((r) => {
+      if (r.id !== id) return r;
+      if (r.repeatUnit) return { ...r, dueDate: addInterval(r.dueDate, r.repeatValue, r.repeatUnit) };
+      return { ...r, done: !r.done };
+    }));
+  };
+  const deleteReminder = (id) => persistReminders(reminders.filter((r) => r.id !== id));
 
   const activeBills = bills.filter((b) => isBillActiveThisMonth(b, viewedMonth));
   const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, viewedMonth));
   const isPaidForView = (b) => b.paid && isCurrentMonth;
   const unpaid = activeBills.filter((b) => !isPaidForView(b)).sort((a, b) => a.dueDay - b.dueDay);
-  const paid = activeBills.filter((b) => isPaidForView(b)).sort((a, b) => a.dueDay - b.dueDay);
-  const total = activeBills.reduce((sum, b) => sum + b.amount, 0);
-  const paidTotal = activeBills.filter((b) => isPaidForView(b)).reduce((sum, b) => sum + b.amount, 0);
+  const paidBills = activeBills.filter((b) => isPaidForView(b)).sort((a, b) => a.dueDay - b.dueDay);
+  const total = activeBills.reduce((s, b) => s + b.amount, 0);
+  const paidTotal = activeBills.filter((b) => isPaidForView(b)).reduce((s, b) => s + b.amount, 0);
   const remaining = total - paidTotal;
   const progressPct = total > 0 ? Math.round((paidTotal / total) * 100) : 0;
   const today = realDay;
@@ -422,517 +402,493 @@ export default function BillTracker() {
     ...activeBills.map((b) => ({ id: b.id, name: b.name, amount: b.amount, kind: "bill", ref: b })),
     ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
   ].sort((a, b) => b.amount - a.amount);
-  const leftoverColor = leftover >= 0 ? "#6E8F6C" : "#A8492C";
+
+  const pendingReminders = reminders.filter((r) => r.repeatUnit || !r.done).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  const completedReminders = reminders.filter((r) => !r.repeatUnit && r.done).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
+  const groupedReminders = GROUP_ORDER.map((label) => ({
+    label,
+    items: pendingReminders.filter((r) => groupLabelFor(r) === label),
+  })).filter((g) => g.items.length > 0);
+
+  const Tools = ({ onEdit, onDelete }) => (
+    <div className="row-tools">
+      <button className="row-tool" onClick={onEdit} aria-label="Edit"><Pencil size={14} /></button>
+      <button className="row-tool" onClick={onDelete} aria-label="Delete"><Trash2 size={14} /></button>
+    </div>
+  );
 
   const BillRow = ({ bill }) => {
     const paidForView = bill.paid && isCurrentMonth;
-    const pastDue = isCurrentMonth && !paidForView && isBillActiveThisMonth(bill, viewedMonth) && bill.dueDay <= today;
-    const PAST_DUE_RED = "#D6392E";
-    const accentColor = paidForView ? "#6E8F6C" : pastDue ? PAST_DUE_RED : "#C15F3C";
+    const pastDue = isCurrentMonth && !paidForView && bill.dueDay <= today;
+    const cls = ["row", pastDue ? "is-alert" : "", paidForView ? "is-done" : "", isCurrentMonth ? "" : "is-locked"].filter(Boolean).join(" ");
     return (
-      <div
-        className="relative card row-shadow rounded-2xl overflow-hidden"
-        style={pastDue ? { backgroundColor: "#FDEEEC", borderColor: "#F0C4BC" } : undefined}
-      >
-        <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: accentColor }} />
-        <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
-          <button
-            onClick={() => isCurrentMonth && togglePaid(bill.id)}
-            className="shrink-0 flex items-center justify-center active:opacity-60"
-            style={{ width: 64, opacity: isCurrentMonth ? 1 : 0.45, cursor: isCurrentMonth ? "pointer" : "default" }}
-            title={isCurrentMonth ? "" : "Switch to the current month to mark bills paid"}
-          >
-            <span
-              className="rounded-full flex items-center justify-center"
-              style={{ width: 28, height: 28, border: paidForView ? "2px solid #6E8F6C" : `2px solid ${pastDue ? PAST_DUE_RED : "#E5D9CF"}`, backgroundColor: paidForView ? "#6E8F6C" : "#ffffff" }}
-            >
-              {paidForView && <Check size={15} color="#ffffff" strokeWidth={3} />}
-            </span>
-          </button>
-          <div className="flex-1 py-3.5 pr-2 min-w-0">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-semibold truncate" style={{ color: paidForView ? "#A39D8E" : "#2D2A26", textDecoration: paidForView ? "line-through" : "none" }}>
-                  {bill.name}
-                </div>
-                <div style={{ fontSize: 12, marginTop: 2, color: pastDue ? PAST_DUE_RED : "#8C8577" }}>
-                  Due the {ordinal(bill.dueDay)} · {bill.paymentType}
-                  {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
-                </div>
-              </div>
-              <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: paidForView ? "#A39D8E" : pastDue ? PAST_DUE_RED : "#2D2A26" }}>
-                ${bill.amount.toFixed(2)}
-              </div>
+      <div className={cls}>
+        <button
+          className="row-check"
+          onClick={() => isCurrentMonth && togglePaid(bill.id)}
+          aria-label={paidForView ? "Mark unpaid" : "Mark paid"}
+          title={isCurrentMonth ? "" : "Switch to this month to mark bills paid"}
+        >
+          <span className={`box ${paidForView ? "on" : ""} ${pastDue ? "warn" : ""}`}>
+            {paidForView && <Check size={13} color="#fff" strokeWidth={3} />}
+          </span>
+        </button>
+        <div className="row-body">
+          <div style={{ minWidth: 0 }}>
+            <div className="row-name">{bill.name}</div>
+            <div className="row-sub">
+              {ordinal(bill.dueDay)} · {bill.paymentType}
+              {(bill.frequencyMonths || 1) > 1 && ` · ${dueMonthsLabel(bill.frequencyMonths, bill.anchorMonth)}`}
             </div>
           </div>
-          {editMode && (
-            <div className="flex flex-col border-hair" style={{ borderLeftWidth: 1, borderLeftStyle: "solid" }}>
-              <button onClick={() => openEdit(bill)} className="flex-1 px-3 flex items-center justify-center active:bg-black/5" style={{ color: "#B5AFA1" }}>
-                <Pencil size={14} />
-              </button>
-              <button onClick={() => deleteBill(bill.id)} className="flex-1 px-3 flex items-center justify-center border-hair active:bg-black/5" style={{ color: "#B5AFA1", borderTopWidth: 1, borderTopStyle: "solid" }}>
-                <Trash2 size={14} />
-              </button>
-            </div>
-          )}
+          <div className="row-amt num">{money(bill.amount)}</div>
         </div>
+        {editMode && <Tools onEdit={() => openEdit(bill)} onDelete={() => deleteBill(bill.id)} />}
       </div>
     );
   };
 
-  const SimpleRow = ({ name, amount, onEdit, onDelete, accent }) => (
-    <div className="relative card row-shadow rounded-2xl overflow-hidden">
-      <div className="absolute left-0 top-0 bottom-0" style={{ width: 3, backgroundColor: accent }} />
-      <div className="flex items-stretch" style={{ paddingLeft: 3 }}>
-        <div className="flex-1 py-3.5 px-4 min-w-0 flex items-center justify-between gap-2">
-          <div className="font-semibold truncate" style={{ color: "#2D2A26" }}>{name}</div>
-          <div className="tabular font-semibold shrink-0" style={{ fontSize: 16, color: "#2D2A26" }}>${amount.toFixed(2)}</div>
-        </div>
-        {editMode && (
-          <div className="flex flex-col border-hair" style={{ borderLeftWidth: 1, borderLeftStyle: "solid" }}>
-            <button onClick={onEdit} className="flex-1 px-3 flex items-center justify-center active:bg-black/5" style={{ color: "#B5AFA1" }}>
-              <Pencil size={14} />
-            </button>
-            <button onClick={onDelete} className="flex-1 px-3 flex items-center justify-center border-hair active:bg-black/5" style={{ color: "#B5AFA1", borderTopWidth: 1, borderTopStyle: "solid" }}>
-              <Trash2 size={14} />
-            </button>
-          </div>
-        )}
+  const AmountRow = ({ name, amount, onEdit, onDelete }) => (
+    <div className="row">
+      <div className="row-body pad">
+        <div className="row-name">{name}</div>
+        <div className="row-amt num">{money(amount)}</div>
       </div>
+      {editMode && <Tools onEdit={onEdit} onDelete={onDelete} />}
     </div>
   );
 
-  return (
-    <div className="min-h-screen bg-cream text-ink font-sans pb-28">
-      <div className="px-5 pt-7 pb-1 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="icon-gradient rounded-xl flex items-center justify-center" style={{ width: 40, height: 40 }}>
-            <Wallet size={19} color="#ffffff" strokeWidth={2.2} />
-          </div>
-          <div>
-            <h1 className="font-display" style={{ fontSize: 22, fontWeight: 700, color: "#2D2A26", lineHeight: 1.2 }}>Bills</h1>
-            <p className="text-muted" style={{ fontSize: 11, lineHeight: 1.2 }}>Household tracker</p>
+  const ReminderRow = ({ item }) => {
+    const pastDue = !item.done && item.dueDate < todayISO;
+    const cls = ["row", pastDue ? "is-alert" : "", item.done ? "is-done" : ""].filter(Boolean).join(" ");
+    return (
+      <div className={cls}>
+        <button className="row-check" onClick={() => toggleReminder(item.id)} aria-label={item.done ? "Mark not done" : "Mark done"}>
+          <span className={`box ${item.done ? "on" : ""} ${pastDue ? "warn" : ""}`}>
+            {item.done && <Check size={13} color="#fff" strokeWidth={3} />}
+          </span>
+        </button>
+        <div className="row-body">
+          <div style={{ minWidth: 0 }}>
+            <div className="row-name">{item.name}</div>
+            <div className="row-sub">
+              {relativeDateLabel(item.dueDate, todayISO)}
+              {item.dueTime && ` · ${formatTime(item.dueTime)}`}
+            </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setEditMode((e) => !e)}
-            className={editMode ? "btn-gradient" : "card"}
-            style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 999, color: editMode ? "#ffffff" : "#5B564C", display: "flex", alignItems: "center", gap: 4 }}
-          >
+        {editMode && <Tools onEdit={() => openEditReminder(item)} onDelete={() => deleteReminder(item.id)} />}
+      </div>
+    );
+  };
+
+  const activeTab = TABS.find((t) => t.key === view);
+
+  return (
+    <div className="app">
+      <header className="hdr">
+        <div className="hdr-left">
+          <div className="hdr-badge">
+            {activeTab && <activeTab.icon size={19} color="#fff" strokeWidth={2.2} />}
+          </div>
+          <div>
+            <div className="hdr-title">Home Hub</div>
+            <div className="hdr-sub">{activeTab ? activeTab.label : ""}</div>
+          </div>
+        </div>
+        <div className="hdr-actions">
+          {view === "bills" && editMode && (
+            <button className="icon-btn" onClick={() => setConfirmReset(true)} aria-label="Reset paid status"><RotateCcw size={14} /></button>
+          )}
+          <button className={`btn-ghost ${editMode ? "on" : ""}`} onClick={() => setEditMode((e) => !e)}>
             {editMode ? <Check size={13} /> : <Lock size={13} />}
             {editMode ? "Done" : "Edit"}
           </button>
-          <button onClick={logout} className="text-muted" style={{ padding: 6 }} title="Log out">
-            <LogOut size={16} />
-          </button>
+          <button className="icon-btn bare" onClick={logout} aria-label="Log out"><LogOut size={16} /></button>
         </div>
-      </div>
+      </header>
 
-      <div className="px-5 mt-3 flex items-center justify-center gap-3">
-        <button onClick={goPrevMonth} className="card flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 999, color: "#5B564C" }}>
-          <ChevronLeft size={16} />
-        </button>
-        <span className="font-display" style={{ fontSize: 15, fontWeight: 600, color: "#2D2A26", minWidth: 140, textAlign: "center" }}>
-          {monthLabel}
-        </span>
-        <button onClick={goNextMonth} className="card flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 999, color: "#5B564C" }}>
-          <ChevronRight size={16} />
-        </button>
-      </div>
-      {!isCurrentMonth && (
-        <div className="px-5 mt-2 flex items-center justify-center">
-          <button onClick={goToday} style={{ fontSize: 12, fontWeight: 600, color: "#C15F3C" }}>
-            Jump back to today
-          </button>
-        </div>
-      )}
-      {!isCurrentMonth && (
-        <div className="mx-5 mt-2 card flex items-center gap-2" style={{ borderRadius: 12, padding: "8px 12px" }}>
-          <span className="text-muted" style={{ fontSize: 11 }}>
-            Previewing {monthLabel} — paid checkboxes are locked here since paid status only tracks your current bill cycle.
-          </span>
-        </div>
-      )}
-
-      {notifStatus === "default" && (
-        <div className="mx-5 mt-3 card flex items-center justify-between" style={{ borderRadius: 14, padding: "10px 14px" }}>
-          <div className="flex items-center gap-2">
-            <Bell size={15} color="#C15F3C" />
-            <span style={{ fontSize: 12, color: "#5B564C" }}>Get notified when a bill is due</span>
+      {(view === "bills" || view === "budget") && (
+        <div>
+          <div className="monthbar">
+            <button className="icon-btn" onClick={goPrevMonth} aria-label="Previous month"><ChevronLeft size={16} /></button>
+            <span className="monthbar-label">{monthLabel}</span>
+            <button className="icon-btn" onClick={goNextMonth} aria-label="Next month"><ChevronRight size={16} /></button>
           </div>
-          <button onClick={enableNotifications} className="btn-gradient" style={{ fontSize: 12, fontWeight: 600, padding: "6px 12px", borderRadius: 999, color: "#ffffff" }}>
-            Enable
-          </button>
-        </div>
-      )}
-      {notifStatus === "denied" && (
-        <div className="mx-5 mt-3 card flex items-center gap-2" style={{ borderRadius: 14, padding: "10px 14px" }}>
-          <BellOff size={15} color="#8C8577" />
-          <span className="text-muted" style={{ fontSize: 12 }}>
-            Notifications are blocked — enable them for this app in your phone's Settings if you'd like reminders.
-          </span>
+          {!isCurrentMonth && <button className="jump" onClick={goToday}>Back to {MONTH_NAMES[realMonth - 1]}</button>}
         </div>
       )}
 
-      <div className="px-5 mt-4">
-        <div className="card flex" style={{ borderRadius: 14, padding: 4 }}>
-          <button
-            onClick={() => setView("bills")}
-            className={`flex-1 rounded-xl ${view === "bills" ? "btn-gradient" : ""}`}
-            style={{ padding: "9px 0", fontSize: 13, fontWeight: 600, color: view === "bills" ? "#ffffff" : "#8C8577" }}
-          >
-            Bills
-          </button>
-          <button
-            onClick={() => setView("budget")}
-            className={`flex-1 rounded-xl ${view === "budget" ? "btn-gradient" : ""}`}
-            style={{ padding: "9px 0", fontSize: 13, fontWeight: 600, color: view === "budget" ? "#ffffff" : "#8C8577" }}
-          >
-            Budget
-          </button>
-        </div>
-      </div>
+      <div className="wrap">
+        {!isCurrentMonth && (view === "bills" || view === "budget") && (
+          <div className="notice">
+            <span className="notice-text">Looking ahead. Checkboxes work in {MONTH_NAMES[realMonth - 1]} only.</span>
+          </div>
+        )}
 
-      {view === "bills" ? (
-        <>
-          <div className="mx-5 mt-4 card card-shadow" style={{ borderRadius: 24, padding: 20 }}>
-            <div className="flex items-center gap-5">
-              <ProgressRing pct={progressPct} label="Paid" />
-              <div className="flex-1" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: "#2D2A26" }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Total</span>
+        {notifStatus === "default" && (
+          <div className="notice">
+            <span className="notice-text" style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <Bell size={14} color="var(--signal)" /> Get a nudge the day a bill is due
+            </span>
+            <button className="btn-accent" onClick={enableNotifications}>Turn on</button>
+          </div>
+        )}
+        {notifStatus === "denied" && (
+          <div className="notice">
+            <span className="notice-text" style={{ display: "flex", alignItems: "center", gap: 7 }}>
+              <BellOff size={14} /> Notifications are off. Turn them on in your phone's Settings.
+            </span>
+          </div>
+        )}
+
+        {/* ---------- BILLS ---------- */}
+        {view === "bills" && (
+          <>
+            <section className="hero">
+              <div className="hero-top">
+                <Ring pct={progressPct} label="Paid" />
+                <div className="hero-stats">
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: "var(--ink)" }} />Total</span>
+                    <span className="stat-val num">{money(total)}</span>
                   </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#2D2A26" }}>${total.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: "#6E8F6C" }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Paid</span>
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: "var(--good)" }} />Paid</span>
+                    <span className="stat-val num" style={{ color: "var(--good)" }}>{money(paidTotal)}</span>
                   </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#6E8F6C" }}>${paidTotal.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: "#C15F3C" }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Remaining</span>
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: "var(--accent)" }} />Remaining</span>
+                    <span className="stat-val num" style={{ color: "var(--accent)" }}>{money(remaining)}</span>
                   </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#C15F3C" }}>${remaining.toFixed(2)}</span>
                 </div>
               </div>
-            </div>
-            {nextBill && (
-              <div className="flex items-center justify-between border-hair" style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopStyle: "solid" }}>
-                <div>
-                  <div className="text-muted" style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Next up</div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: "#2D2A26", marginTop: 2 }}>{nextBill.name} · due the {ordinal(nextBill.dueDay)}</div>
+              {nextBill && (
+                <div className="hero-foot">
+                  <div>
+                    <div className="eyebrow">Next due</div>
+                    <div className="hero-foot-name">{nextBill.name} · {ordinal(nextBill.dueDay)}</div>
+                  </div>
+                  <div className="row-amt num">{money(nextBill.amount)}</div>
                 </div>
-                <div className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#2D2A26" }}>${nextBill.amount.toFixed(2)}</div>
-              </div>
-            )}
-          </div>
+              )}
+            </section>
 
-          {error && (
-            <div className="mx-5 mt-4 px-3 py-2 rounded-xl text-sm" style={{ backgroundColor: "#FBEAE4", border: "1px solid #EFC6B6", color: "#A8492C" }}>{error}</div>
-          )}
+            {error && <div className="notice-err">{error}</div>}
 
-          <div className="px-5 mt-6">
             {loading ? (
-              <div className="text-center text-muted text-sm py-10">Loading…</div>
+              <div className="empty" style={{ marginTop: 22 }}>Loading…</div>
             ) : bills.length === 0 ? (
-              <div className="text-center text-muted text-sm py-12 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No bills yet. Tap + Add Bill to start your list.</div>
+              <div className="empty" style={{ marginTop: 22 }}>No bills yet. Tap Edit, then Add to build your list.</div>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Upcoming ({unpaid.length})</span>
+                <div className="sec">
+                  <span className="eyebrow">Unpaid · {unpaid.length}</span>
+                  {editMode && <button className="link" onClick={openAdd}>Add bill</button>}
                 </div>
-                <div className="space-y-2.5">
-                  {unpaid.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>Nothing left to pay this month</div>
-                  ) : (
-                    unpaid.map((bill) => <BillRow key={bill.id} bill={bill} />)
-                  )}
-                </div>
-                {paid.length > 0 && (
-                  <div className="mt-6">
-                    <button onClick={() => setShowPaid((s) => !s)} className="w-full flex items-center justify-between mb-2.5">
-                      <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Paid ({paid.length})</span>
-                      <ChevronDown size={15} color="#8C8577" style={{ transition: "transform 0.2s", transform: showPaid ? "rotate(180deg)" : "rotate(0deg)" }} />
+                {unpaid.length === 0 ? (
+                  <div className="empty">Everything's paid for {monthLabel}.</div>
+                ) : (
+                  <div className="panel">{unpaid.map((b) => <BillRow key={b.id} bill={b} />)}</div>
+                )}
+
+                {paidBills.length > 0 && (
+                  <>
+                    <button className="sec-toggle" onClick={() => setShowPaid((s) => !s)}>
+                      <span className="eyebrow">Paid · {paidBills.length}</span>
+                      <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showPaid ? "rotate(180deg)" : "none" }} />
                     </button>
-                    {showPaid && <div className="space-y-2.5">{paid.map((bill) => <BillRow key={bill.id} bill={bill} />)}</div>}
+                    {showPaid && <div className="panel">{paidBills.map((b) => <BillRow key={b.id} bill={b} />)}</div>}
+                  </>
+                )}
+
+                {inactiveBills.length > 0 && (
+                  <>
+                    <button className="sec-toggle" onClick={() => setShowInactive((s) => !s)}>
+                      <span className="eyebrow">Not billed this month · {inactiveBills.length}</span>
+                      <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showInactive ? "rotate(180deg)" : "none" }} />
+                    </button>
+                    {showInactive && <div className="panel">{[...inactiveBills].sort((a, b) => a.dueDay - b.dueDay).map((b) => <BillRow key={b.id} bill={b} />)}</div>}
+                  </>
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        {/* ---------- BUDGET ---------- */}
+        {view === "budget" && (
+          <>
+            <section className="hero">
+              <div className="hero-top">
+                <Ring pct={allocatedPct} label="Spent" tone={allocatedPct > 100 ? "var(--alert)" : undefined} />
+                <div className="hero-stats">
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: "var(--ink)" }} />Income</span>
+                    <span className="stat-val num">{money(totalIncome)}</span>
+                  </div>
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: "var(--accent)" }} />Expenses</span>
+                    <span className="stat-val num" style={{ color: "var(--accent)" }}>{money(totalExpenses)}</span>
+                  </div>
+                  <div className="stat">
+                    <span className="stat-key"><span className="dot" style={{ background: leftover >= 0 ? "var(--good)" : "var(--alert)" }} />Left over</span>
+                    <span className="stat-val num" style={{ color: leftover >= 0 ? "var(--good)" : "var(--alert)" }}>{money(leftover)}</span>
+                  </div>
+                </div>
+              </div>
+              <div className="hero-foot">
+                <div>
+                  <div className="eyebrow">Weekly</div>
+                  <div className="hero-foot-name">Spending money</div>
+                </div>
+                <div className="row-amt num" style={{ color: leftover >= 0 ? "var(--good)" : "var(--alert)" }}>{money(weeklyLeftover)}</div>
+              </div>
+            </section>
+
+            {budgetError && <div className="notice-err">{budgetError}</div>}
+
+            {budgetLoading ? (
+              <div className="empty" style={{ marginTop: 22 }}>Loading…</div>
+            ) : (
+              <>
+                <div className="sec">
+                  <span className="eyebrow">Income · {budgetIncomes.length}</span>
+                  {editMode && <button className="link" onClick={openAddIncome}>Add income</button>}
+                </div>
+                {budgetIncomes.length === 0 ? (
+                  <div className="empty">No income added yet.</div>
+                ) : (
+                  <div className="panel">
+                    {budgetIncomes.map((inc) => <AmountRow key={inc.id} name={inc.name} amount={inc.amount} onEdit={() => openEditIncome(inc)} onDelete={() => deleteIncome(inc.id)} />)}
                   </div>
                 )}
-                {inactiveBills.length > 0 && (
-                  <div className="mt-6">
-                    <button onClick={() => setShowInactive((s) => !s)} className="w-full flex items-center justify-between mb-2.5">
-                      <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Not Due This Month ({inactiveBills.length})</span>
-                      <ChevronDown size={15} color="#8C8577" style={{ transition: "transform 0.2s", transform: showInactive ? "rotate(180deg)" : "rotate(0deg)" }} />
-                    </button>
-                    {showInactive && (
-                      <div className="space-y-2.5">
-                        {[...inactiveBills].sort((a, b) => a.dueDay - b.dueDay).map((bill) => <BillRow key={bill.id} bill={bill} />)}
-                      </div>
-                    )}
+
+                <div className="sec">
+                  <span className="eyebrow">Expenses · {combinedExpenses.length}</span>
+                  {editMode && <button className="link" onClick={openAddItem}>Add expense</button>}
+                </div>
+                {combinedExpenses.length === 0 ? (
+                  <div className="empty">No expenses added yet.</div>
+                ) : (
+                  <div className="panel">
+                    {combinedExpenses.map((e) => (
+                      <AmountRow
+                        key={e.id}
+                        name={e.name}
+                        amount={e.amount}
+                        onEdit={() => (e.kind === "bill" ? openEdit(e.ref) : openEditItem(e.ref))}
+                        onDelete={() => (e.kind === "bill" ? deleteBill(e.id) : deleteItem(e.id))}
+                      />
+                    ))}
                   </div>
                 )}
               </>
             )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div className="mx-5 mt-4 card card-shadow" style={{ borderRadius: 24, padding: 20 }}>
-            <div className="flex items-center gap-5">
-              <ProgressRing pct={allocatedPct} label="Spent" />
-              <div className="flex-1" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: "#2D2A26" }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Income</span>
-                  </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#2D2A26" }}>${totalIncome.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: "#C15F3C" }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Expenses</span>
-                  </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: "#C15F3C" }}>${totalExpenses.toFixed(2)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span style={{ width: 8, height: 8, borderRadius: 999, backgroundColor: leftoverColor }} />
-                    <span className="text-muted" style={{ fontSize: 12 }}>Leftover</span>
-                  </div>
-                  <span className="tabular" style={{ fontSize: 14, fontWeight: 600, color: leftoverColor }}>${leftover.toFixed(2)}</span>
-                </div>
-              </div>
+          </>
+        )}
+
+        {/* ---------- REMINDERS ---------- */}
+        {view === "reminders" && (
+          <>
+            {remindersError && <div className="notice-err">{remindersError}</div>}
+
+            <div className="sec tight">
+              <span className="eyebrow">Scheduled · {pendingReminders.length}</span>
+              {editMode && <button className="link" onClick={openAddReminder}>Add reminder</button>}
             </div>
-            <div className="flex items-center justify-between border-hair" style={{ marginTop: 16, paddingTop: 16, borderTopWidth: 1, borderTopStyle: "solid" }}>
-              <div>
-                <div className="text-muted" style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: 0.5 }}>Per week</div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: "#2D2A26", marginTop: 2 }}>Leftover to spend</div>
-              </div>
-              <div className="tabular" style={{ fontSize: 14, fontWeight: 600, color: leftoverColor }}>${weeklyLeftover.toFixed(2)}</div>
-            </div>
-          </div>
 
-          {budgetError && (
-            <div className="mx-5 mt-4 px-3 py-2 rounded-xl text-sm" style={{ backgroundColor: "#FBEAE4", border: "1px solid #EFC6B6", color: "#A8492C" }}>{budgetError}</div>
-          )}
+            {remindersLoading ? (
+              <div className="empty">Loading…</div>
+            ) : pendingReminders.length === 0 ? (
+              <div className="empty">Nothing scheduled. Tap Edit, then Add to set one up.</div>
+            ) : (
+              groupedReminders.map((group, i) => (
+                <div key={group.label} style={{ marginTop: i === 0 ? 0 : 20 }}>
+                  <div className="eyebrow" style={{ marginBottom: 8 }}>{group.label} · {group.items.length}</div>
+                  <div className="panel">{group.items.map((item) => <ReminderRow key={item.id} item={item} />)}</div>
+                </div>
+              ))
+            )}
 
-          {budgetLoading ? (
-            <div className="text-center text-muted text-sm py-10">Loading…</div>
-          ) : (
-            <>
-              <div className="px-5 mt-6">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Income ({budgetIncomes.length})</span>
-                  {editMode && <button onClick={openAddIncome} style={{ color: "#C15F3C", fontSize: 12, fontWeight: 600 }}>+ Add</button>}
-                </div>
-                <div className="space-y-2.5">
-                  {budgetIncomes.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No income sources yet.</div>
-                  ) : (
-                    budgetIncomes.map((inc) => (
-                      <SimpleRow key={inc.id} name={inc.name} amount={inc.amount} accent="#6E8F6C" onEdit={() => openEditIncome(inc)} onDelete={() => deleteIncome(inc.id)} />
-                    ))
-                  )}
-                </div>
-              </div>
+            {completedReminders.length > 0 && (
+              <>
+                <button className="sec-toggle" onClick={() => setShowCompleted((s) => !s)}>
+                  <span className="eyebrow">Done · {completedReminders.length}</span>
+                  <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showCompleted ? "rotate(180deg)" : "none" }} />
+                </button>
+                {showCompleted && <div className="panel">{completedReminders.map((item) => <ReminderRow key={item.id} item={item} />)}</div>}
+              </>
+            )}
+          </>
+        )}
+      </div>
 
-              <div className="px-5 mt-6">
-                <div className="flex items-center justify-between mb-2.5">
-                  <span className="text-muted" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>Expenses ({combinedExpenses.length})</span>
-                  {editMode && <button onClick={openAddItem} style={{ color: "#C15F3C", fontSize: 12, fontWeight: 600 }}>+ Add</button>}
-                </div>
-                <div className="space-y-2.5">
-                  {combinedExpenses.length === 0 ? (
-                    <div className="text-center text-muted text-sm py-8 rounded-2xl" style={{ border: "1px dashed #E5E0D5" }}>No expenses yet.</div>
-                  ) : (
-                    combinedExpenses.map((e) => (
-                      <SimpleRow
-                        key={e.id}
-                        name={e.name}
-                        amount={e.amount}
-                        accent="#C15F3C"
-                        onEdit={() => (e.kind === "bill" ? openEdit(e.ref) : openEditItem(e.ref))}
-                        onDelete={() => (e.kind === "bill" ? deleteBill(e.id) : deleteItem(e.id))}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-            </>
-          )}
-        </>
+      {(saving || budgetSaving || remindersSaving) && (
+        <div className="saving"><span className="meta">Saving…</span></div>
       )}
 
-      {!editMode ? (
-        <div className="fixed bottom-0 left-0 right-0 flex items-center justify-center border-hair" style={{ backgroundColor: "rgba(250,249,245,0.95)", backdropFilter: "blur(6px)", padding: "16px 20px", borderTopWidth: 1, borderTopStyle: "solid" }}>
-          <span className="text-muted" style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-            <Lock size={13} />
-            Tap Edit to make changes
-          </span>
-        </div>
-      ) : view === "bills" ? (
-        <div className="fixed bottom-0 left-0 right-0 flex gap-3 border-hair" style={{ backgroundColor: "rgba(250,249,245,0.95)", backdropFilter: "blur(6px)", padding: "12px 20px", borderTopWidth: 1, borderTopStyle: "solid" }}>
-          <button onClick={() => setConfirmReset(true)} className="card flex items-center justify-center gap-2 active:opacity-70" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 500, color: "#5B564C" }}>
-            <RotateCcw size={15} />
-            Reset
-          </button>
-          <button onClick={openAdd} className="btn-gradient flex-1 flex items-center justify-center gap-2 active:opacity-90" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600, color: "#ffffff" }}>
-            <Plus size={16} />
-            Add Bill
-          </button>
-        </div>
-      ) : (
-        <div className="fixed bottom-0 left-0 right-0 flex gap-3 border-hair" style={{ backgroundColor: "rgba(250,249,245,0.95)", backdropFilter: "blur(6px)", padding: "12px 20px", borderTopWidth: 1, borderTopStyle: "solid" }}>
-          <button onClick={openAddIncome} className="card flex items-center justify-center gap-2 active:opacity-70" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 500, color: "#5B564C" }}>
-            <Plus size={15} />
-            Income
-          </button>
-          <button onClick={openAddItem} className="btn-gradient flex-1 flex items-center justify-center gap-2 active:opacity-90" style={{ padding: "12px 16px", borderRadius: 12, fontSize: 14, fontWeight: 600, color: "#ffffff" }}>
-            <Plus size={16} />
-            Add Expense
-          </button>
-        </div>
-      )}
+      <nav className="nav">
+        {TABS.map((tab) => {
+          const Icon = tab.icon;
+          return (
+            <button key={tab.key} className={`nav-item ${view === tab.key ? "on" : ""}`} onClick={() => setView(tab.key)}>
+              <Icon size={19} strokeWidth={view === tab.key ? 2.3 : 1.9} />
+              <span className="nav-label">{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
 
-      {(saving || budgetSaving) && (
-        <div style={{ position: "fixed", bottom: 72, left: 0, right: 0, textAlign: "center", pointerEvents: "none" }}>
-          <span className="text-muted" style={{ fontSize: 11, backgroundColor: "rgba(250,249,245,0.9)", padding: "0 8px" }}>saving…</span>
-        </div>
-      )}
-
+      {/* Bill sheet */}
       {showForm && (
-        <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)", maxHeight: "88vh", overflowY: "auto" }}>
-            <div className="mx-auto mb-4" style={{ width: 40, height: 4, backgroundColor: "#E5E0D5", borderRadius: 999 }} />
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-display" style={{ fontSize: 22, fontWeight: 600, color: "#2D2A26" }}>{editingId ? "Edit Bill" : "Add Bill"}</h2>
-              <button onClick={closeForm} className="flex items-center justify-center rounded-full" style={{ width: 32, height: 32, backgroundColor: "#F5F3EE", color: "#8C8577" }}>
-                <X size={18} />
-              </button>
+        <div className="scrim" onClick={closeForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingId ? "Edit bill" : "New bill"}</span>
+              <button className="sheet-close" onClick={closeForm} aria-label="Close"><X size={17} /></button>
             </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Bill name</label>
-                <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Electric" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-              </div>
-              <div className="flex gap-3">
-                <div className="flex-1">
-                  <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Due day</label>
-                  <input type="number" min="1" max="31" value={form.dueDay} onChange={(e) => setForm({ ...form, dueDay: e.target.value })} placeholder="15" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-                </div>
-                <div className="flex-1">
-                  <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Amount</label>
-                  <input type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0.00" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-                </div>
-              </div>
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Payment type</label>
-                <div className="grid grid-cols-3 gap-2 mt-1">
-                  {PAYMENT_TYPES.map((t) => (
-                    <button key={t} onClick={() => setForm({ ...form, paymentType: t })} className={`chip ${form.paymentType === t ? "active" : ""} rounded-lg`} style={{ padding: "8px 0", fontSize: 12, fontWeight: 500 }}>{t}</button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Frequency</label>
-                <div className="grid grid-cols-4 gap-2 mt-1">
-                  {FREQUENCIES.map((f) => (
-                    <button key={f.value} onClick={() => setForm({ ...form, frequencyMonths: f.value })} className={`chip ${form.frequencyMonths === f.value ? "active" : ""} rounded-lg`} style={{ padding: "8px 0", fontSize: 11, fontWeight: 500 }}>{f.label}</button>
-                  ))}
-                </div>
-              </div>
-              {form.frequencyMonths > 1 && (
-                <div>
-                  <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>One month it's due</label>
-                  <select
-                    value={form.anchorMonth}
-                    onChange={(e) => setForm({ ...form, anchorMonth: parseInt(e.target.value, 10) })}
-                    className="input-field w-full mt-1 rounded-xl px-3 py-3"
-                  >
-                    {MONTH_NAMES.map((name, i) => (
-                      <option key={i} value={i + 1}>{name}</option>
-                    ))}
-                  </select>
-                  <p className="text-muted" style={{ fontSize: 11, marginTop: 6 }}>{dueMonthsLabel(form.frequencyMonths, form.anchorMonth)}</p>
-                </div>
-              )}
-              <button onClick={submitForm} disabled={!form.name.trim()} className="btn-gradient w-full mt-2 rounded-xl" style={{ padding: "14px 0", fontSize: 14, fontWeight: 600, color: "#ffffff", opacity: !form.name.trim() ? 0.4 : 1 }}>
-                {editingId ? "Save changes" : "Add bill"}
-              </button>
+            <div className="field">
+              <span className="eyebrow field-label">Name</span>
+              <input className="input" type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Electric" />
             </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Day due</span>
+                <input className="input" type="number" min="1" max="31" value={form.dueDay} onChange={(e) => setForm({ ...form, dueDay: e.target.value })} placeholder="15" />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Amount</span>
+                <input className="input" type="number" step="0.01" value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} placeholder="0.00" />
+              </div>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Paid by</span>
+              <div className="chips chips-3">
+                {PAYMENT_TYPES.map((t) => (
+                  <button key={t} className={`chip ${form.paymentType === t ? "on" : ""}`} onClick={() => setForm({ ...form, paymentType: t })}>{t}</button>
+                ))}
+              </div>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Billed</span>
+              <div className="chips chips-4">
+                {FREQUENCIES.map((f) => (
+                  <button key={f.value} className={`chip ${form.frequencyMonths === f.value ? "on" : ""}`} onClick={() => setForm({ ...form, frequencyMonths: f.value })}>{f.label}</button>
+                ))}
+              </div>
+            </div>
+            {form.frequencyMonths > 1 && (
+              <div className="field">
+                <span className="eyebrow field-label">A month it lands in</span>
+                <select className="input" value={form.anchorMonth} onChange={(e) => setForm({ ...form, anchorMonth: parseInt(e.target.value, 10) })}>
+                  {MONTH_NAMES.map((name, i) => <option key={i} value={i + 1}>{name}</option>)}
+                </select>
+                <div className="meta hint">Bills in {dueMonthsLabel(form.frequencyMonths, form.anchorMonth)}</div>
+              </div>
+            )}
+            <button className="btn-primary" onClick={submitForm} disabled={!form.name.trim()}>{editingId ? "Save changes" : "Add bill"}</button>
           </div>
         </div>
       )}
 
+      {/* Income sheet */}
       {showIncomeForm && (
-        <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)" }}>
-            <div className="mx-auto mb-4" style={{ width: 40, height: 4, backgroundColor: "#E5E0D5", borderRadius: 999 }} />
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-display" style={{ fontSize: 22, fontWeight: 600, color: "#2D2A26" }}>{editingIncomeId ? "Edit Income" : "Add Income"}</h2>
-              <button onClick={closeIncomeForm} className="flex items-center justify-center rounded-full" style={{ width: 32, height: 32, backgroundColor: "#F5F3EE", color: "#8C8577" }}>
-                <X size={18} />
-              </button>
+        <div className="scrim" onClick={closeIncomeForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingIncomeId ? "Edit income" : "New income"}</span>
+              <button className="sheet-close" onClick={closeIncomeForm} aria-label="Close"><X size={17} /></button>
             </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Source name</label>
-                <input type="text" value={incomeForm.name} onChange={(e) => setIncomeForm({ ...incomeForm, name: e.target.value })} placeholder="e.g. Michael Monthly Income" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-              </div>
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Amount</label>
-                <input type="number" step="0.01" value={incomeForm.amount} onChange={(e) => setIncomeForm({ ...incomeForm, amount: e.target.value })} placeholder="0.00" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-              </div>
-              <button onClick={submitIncomeForm} disabled={!incomeForm.name.trim()} className="btn-gradient w-full mt-2 rounded-xl" style={{ padding: "14px 0", fontSize: 14, fontWeight: 600, color: "#ffffff", opacity: !incomeForm.name.trim() ? 0.4 : 1 }}>
-                {editingIncomeId ? "Save changes" : "Add income"}
-              </button>
+            <div className="field">
+              <span className="eyebrow field-label">Source</span>
+              <input className="input" type="text" value={incomeForm.name} onChange={(e) => setIncomeForm({ ...incomeForm, name: e.target.value })} placeholder="Paycheck" />
             </div>
+            <div className="field">
+              <span className="eyebrow field-label">Monthly amount</span>
+              <input className="input" type="number" step="0.01" value={incomeForm.amount} onChange={(e) => setIncomeForm({ ...incomeForm, amount: e.target.value })} placeholder="0.00" />
+            </div>
+            <button className="btn-primary" onClick={submitIncomeForm} disabled={!incomeForm.name.trim()}>{editingIncomeId ? "Save changes" : "Add income"}</button>
           </div>
         </div>
       )}
 
+      {/* Expense sheet */}
       {showItemForm && (
-        <div className="fixed inset-0 flex items-end z-20" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <div className="w-full bg-white px-5 pt-5 pb-8" style={{ borderTopLeftRadius: 24, borderTopRightRadius: 24, boxShadow: "0 -8px 30px rgba(0,0,0,0.2)" }}>
-            <div className="mx-auto mb-4" style={{ width: 40, height: 4, backgroundColor: "#E5E0D5", borderRadius: 999 }} />
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="font-display" style={{ fontSize: 22, fontWeight: 600, color: "#2D2A26" }}>{editingItemId ? "Edit Expense" : "Add Expense"}</h2>
-              <button onClick={closeItemForm} className="flex items-center justify-center rounded-full" style={{ width: 32, height: 32, backgroundColor: "#F5F3EE", color: "#8C8577" }}>
-                <X size={18} />
-              </button>
+        <div className="scrim" onClick={closeItemForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingItemId ? "Edit expense" : "New expense"}</span>
+              <button className="sheet-close" onClick={closeItemForm} aria-label="Close"><X size={17} /></button>
             </div>
-            <div className="space-y-4">
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Expense name</label>
-                <input type="text" value={itemForm.name} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} placeholder="e.g. Groceries" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-              </div>
-              <div>
-                <label className="text-muted" style={{ fontSize: 12, fontWeight: 500 }}>Amount</label>
-                <input type="number" step="0.01" value={itemForm.amount} onChange={(e) => setItemForm({ ...itemForm, amount: e.target.value })} placeholder="0.00" className="input-field w-full mt-1 rounded-xl px-3 py-3" />
-              </div>
-              <button onClick={submitItemForm} disabled={!itemForm.name.trim()} className="btn-gradient w-full mt-2 rounded-xl" style={{ padding: "14px 0", fontSize: 14, fontWeight: 600, color: "#ffffff", opacity: !itemForm.name.trim() ? 0.4 : 1 }}>
-                {editingItemId ? "Save changes" : "Add expense"}
-              </button>
+            <div className="field">
+              <span className="eyebrow field-label">Name</span>
+              <input className="input" type="text" value={itemForm.name} onChange={(e) => setItemForm({ ...itemForm, name: e.target.value })} placeholder="Groceries" />
             </div>
+            <div className="field">
+              <span className="eyebrow field-label">Monthly amount</span>
+              <input className="input" type="number" step="0.01" value={itemForm.amount} onChange={(e) => setItemForm({ ...itemForm, amount: e.target.value })} placeholder="0.00" />
+            </div>
+            <button className="btn-primary" onClick={submitItemForm} disabled={!itemForm.name.trim()}>{editingItemId ? "Save changes" : "Add expense"}</button>
           </div>
         </div>
       )}
 
+      {/* Reminder sheet */}
+      {showReminderForm && (
+        <div className="scrim" onClick={closeReminderForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingReminderId ? "Edit reminder" : "New reminder"}</span>
+              <button className="sheet-close" onClick={closeReminderForm} aria-label="Close"><X size={17} /></button>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">What needs doing</span>
+              <input className="input" type="text" value={reminderForm.name} onChange={(e) => setReminderForm({ ...reminderForm, name: e.target.value })} placeholder="Change furnace filter" />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">First due</span>
+                <input className="input" type="date" value={reminderForm.dueDate} onChange={(e) => setReminderForm({ ...reminderForm, dueDate: e.target.value })} />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Notify at</span>
+                <input className="input" type="time" value={reminderForm.dueTime} onChange={(e) => setReminderForm({ ...reminderForm, dueTime: e.target.value })} />
+              </div>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Repeats</span>
+              <div className="chips chips-3">
+                {REPEAT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.label}
+                    className={`chip ${reminderForm.repeatValue === opt.value && reminderForm.repeatUnit === opt.unit ? "on" : ""}`}
+                    onClick={() => setReminderForm({ ...reminderForm, repeatValue: opt.value, repeatUnit: opt.unit })}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {reminderForm.repeatUnit && <div className="meta hint">Checking it off schedules the next one.</div>}
+            </div>
+            <button className="btn-primary" onClick={submitReminderForm} disabled={!reminderForm.name.trim() || !reminderForm.dueDate}>{editingReminderId ? "Save changes" : "Add reminder"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Reset dialog */}
       {confirmReset && (
-        <div className="fixed inset-0 flex items-center justify-center z-20 px-6" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
-          <div className="w-full max-w-sm bg-white rounded-2xl p-6" style={{ boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
-            <h3 className="font-display" style={{ fontSize: 20, fontWeight: 600, color: "#2D2A26", marginBottom: 8 }}>Reset for new month?</h3>
-            <p style={{ fontSize: 14, color: "#5B564C", marginBottom: 24 }}>This marks every bill as unpaid again. Your bill list stays exactly the same — nothing gets deleted.</p>
-            <div className="flex gap-3">
-              <button onClick={() => setConfirmReset(false)} className="flex-1 rounded-xl" style={{ padding: "10px 0", border: "1px solid #E5E0D5", color: "#5B564C", fontSize: 14, fontWeight: 500 }}>Cancel</button>
-              <button onClick={resetMonth} className="btn-gradient flex-1 rounded-xl" style={{ padding: "10px 0", color: "#ffffff", fontSize: 14, fontWeight: 600 }}>Reset</button>
+        <div className="dialog" onClick={() => setConfirmReset(false)}>
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">Start a new month?</div>
+            <p className="dialog-body">Every bill goes back to unpaid. Your list stays exactly as it is.</p>
+            <div className="dialog-actions">
+              <button className="btn-secondary" onClick={() => setConfirmReset(false)}>Cancel</button>
+              <button className="btn-confirm" onClick={resetMonth}>Reset</button>
             </div>
           </div>
         </div>
