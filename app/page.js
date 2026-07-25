@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare,
-  ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff,
+  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare, Car,
+  ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff, DownloadCloud,
 } from "lucide-react";
 
 function urlBase64ToUint8Array(base64String) {
@@ -26,6 +26,7 @@ const TABS = [
   { key: "bills", label: "Bills", icon: Wallet },
   { key: "budget", label: "Budget", icon: PieChart },
   { key: "reminders", label: "Reminders", icon: CheckSquare },
+  { key: "vehicles", label: "Vehicles", icon: Car },
 ];
 const REPEAT_OPTIONS = [
   { label: "None", value: null, unit: null },
@@ -111,6 +112,22 @@ const countNeedsAttention = (bills, reminders, day, month, todayISO) => {
 const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc.", frequencyMonths: 1, anchorMonth: new Date().getMonth() + 1 };
 const emptySimpleForm = { name: "", amount: "" };
 const emptyReminderForm = { name: "", dueDate: toISODate(new Date()), dueTime: "09:00", repeatValue: null, repeatUnit: null };
+const emptyVehicleForm = { name: "", mileage: "", lastOilDate: "", oilInterval: "5000", engine: "", tireSize: "", oilType: "", oilAmount: "", oilFilter: "", drainPlugSocket: "", lugNutSocket: "", wheelTorque: "", notes: "" };
+
+// Enter mileage only when you actually change the oil — the next change is
+// just that number plus the interval. No separate "current" reading to track.
+const oilDueAt = (v) => {
+  if (v.mileage == null || !v.oilInterval) return null;
+  return v.mileage + v.oilInterval;
+};
+const emptyLogForm = { description: "", date: toISODate(new Date()), mileage: "" };
+
+const formatLogDate = (iso) => {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-").map(Number);
+  return `${MONTH_SHORT[m - 1]} ${d}, ${y}`;
+};
+const fmtMiles = (n) => (typeof n === "number" ? `${n.toLocaleString()} mi` : "");
 
 const formatTime = (t) => {
   if (!t) return "";
@@ -142,6 +159,10 @@ export default function HomeHub() {
   const [view, setView] = useState("bills");
   const [editMode, setEditMode] = useState(false);
   const [notifStatus, setNotifStatus] = useState("unknown");
+  const [showBackup, setShowBackup] = useState(false);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState(null);
+  const [confirmRestore, setConfirmRestore] = useState(null); // holds parsed backup data awaiting confirmation
 
   const realNow = new Date();
   const realMonth = realNow.getMonth() + 1;
@@ -193,6 +214,19 @@ export default function HomeHub() {
   const [reminderForm, setReminderForm] = useState(emptyReminderForm);
   const [showCompleted, setShowCompleted] = useState(false);
 
+  const [vehicles, setVehicles] = useState([]);
+  const [vehiclesLoading, setVehiclesLoading] = useState(true);
+  const [vehiclesSaving, setVehiclesSaving] = useState(false);
+  const [vehiclesError, setVehiclesError] = useState(null);
+  const [expandedVehicleId, setExpandedVehicleId] = useState(null);
+  const [showVehicleForm, setShowVehicleForm] = useState(false);
+  const [editingVehicleId, setEditingVehicleId] = useState(null);
+  const [vehicleForm, setVehicleForm] = useState(emptyVehicleForm);
+  const [showLogForm, setShowLogForm] = useState(false);
+  const [logVehicleId, setLogVehicleId] = useState(null);
+  const [editingLogId, setEditingLogId] = useState(null);
+  const [logForm, setLogForm] = useState(emptyLogForm);
+
   const load = useCallback(async (quiet) => {
     if (!quiet) setLoading(true);
     setError(null);
@@ -228,7 +262,18 @@ export default function HomeHub() {
     finally { setRemindersLoading(false); }
   }, []);
 
-  useEffect(() => { load(); loadBudget(); loadReminders(); }, [load, loadBudget, loadReminders]);
+  const loadVehicles = useCallback(async (quiet) => {
+    if (!quiet) setVehiclesLoading(true);
+    setVehiclesError(null);
+    try {
+      const res = await fetch("/api/vehicles", { cache: "no-store" });
+      if (!res.ok) throw new Error("failed");
+      setVehicles(await res.json());
+    } catch (e) { setVehiclesError("Vehicles didn't load. Check your connection and pull down to retry."); }
+    finally { setVehiclesLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); loadBudget(); loadReminders(); loadVehicles(); }, [load, loadBudget, loadReminders, loadVehicles]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -270,7 +315,7 @@ export default function HomeHub() {
     if (typeof document === "undefined") return;
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      load(true); loadBudget(true); loadReminders(true);
+      load(true); loadBudget(true); loadReminders(true); loadVehicles(true);
     };
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
@@ -280,7 +325,7 @@ export default function HomeHub() {
       window.removeEventListener("focus", refresh);
       clearInterval(timer);
     };
-  }, [load, loadBudget, loadReminders]);
+  }, [load, loadBudget, loadReminders, loadVehicles]);
 
   const persist = async (next) => {
     setBills(next); setSaving(true); setError(null);
@@ -309,7 +354,79 @@ export default function HomeHub() {
     finally { setRemindersSaving(false); }
   };
 
+  const persistVehicles = async (next) => {
+    setVehicles(next); setVehiclesSaving(true); setVehiclesError(null);
+    try {
+      const res = await fetch("/api/vehicles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      if (!res.ok) throw new Error("failed");
+    } catch (e) { setVehiclesError("That change didn't save. Check your connection and try again."); }
+    finally { setVehiclesSaving(false); }
+  };
+
   const logout = async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; };
+
+  // ---- Backup / restore ----
+  const exportBackup = async () => {
+    setBackupBusy(true); setBackupMessage(null);
+    try {
+      const res = await fetch("/api/backup", { cache: "no-store" });
+      if (!res.ok) throw new Error("failed");
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const stamp = data.exportedAt ? data.exportedAt.slice(0, 10) : toISODate(new Date());
+      a.href = url;
+      a.download = `home-hub-backup-${stamp}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setBackupMessage({ type: "ok", text: "Backup downloaded." });
+    } catch (e) {
+      setBackupMessage({ type: "err", text: "Couldn't create a backup. Check your connection and try again." });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const chooseRestoreFile = (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // allow picking the same file again later
+    if (!file) return;
+    setBackupMessage(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        setConfirmRestore(data);
+      } catch (err) {
+        setBackupMessage({ type: "err", text: "That file doesn't look like a valid backup." });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const runRestore = async () => {
+    if (!confirmRestore) return;
+    setBackupBusy(true); setBackupMessage(null);
+    try {
+      const res = await fetch("/api/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(confirmRestore),
+      });
+      if (!res.ok) throw new Error("failed");
+      setConfirmRestore(null);
+      setBackupMessage({ type: "ok", text: "Restored. Reloading…" });
+      await Promise.all([load(true), loadBudget(true), loadReminders(true), loadVehicles(true)]);
+      setBackupMessage({ type: "ok", text: "Restored from backup." });
+    } catch (e) {
+      setBackupMessage({ type: "err", text: "Couldn't restore that backup. Check your connection and try again." });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
 
   const openAdd = () => { setEditingId(null); setForm(emptyBillForm); setShowForm(true); };
   const openEdit = (bill) => {
@@ -389,6 +506,71 @@ export default function HomeHub() {
     }));
   };
   const deleteReminder = (id) => persistReminders(reminders.filter((r) => r.id !== id));
+
+  // ---- Vehicle CRUD ----
+  const openAddVehicle = () => { setEditingVehicleId(null); setVehicleForm(emptyVehicleForm); setShowVehicleForm(true); };
+  const openEditVehicle = (v) => {
+    setEditingVehicleId(v.id);
+    setVehicleForm({
+      name: v.name,
+      mileage: String(v.mileage ?? ""),
+      lastOilDate: v.lastOilDate || "",
+      oilInterval: v.oilInterval != null ? String(v.oilInterval) : "5000",
+      engine: v.engine || "",
+      tireSize: v.tireSize || "",
+      oilType: v.oilType || "",
+      oilAmount: v.oilAmount || "",
+      oilFilter: v.oilFilter || "",
+      drainPlugSocket: v.drainPlugSocket || "",
+      lugNutSocket: v.lugNutSocket || "",
+      wheelTorque: v.wheelTorque || "",
+      notes: v.notes || "",
+    });
+    setShowVehicleForm(true);
+  };
+  const closeVehicleForm = () => { setShowVehicleForm(false); setEditingVehicleId(null); setVehicleForm(emptyVehicleForm); };
+  const submitVehicleForm = () => {
+    const name = vehicleForm.name.trim();
+    if (!name) return;
+    const mileage = vehicleForm.mileage === "" ? 0 : parseInt(vehicleForm.mileage, 10) || 0;
+    const lastOilDate = vehicleForm.lastOilDate || null;
+    const oilInterval = parseInt(vehicleForm.oilInterval, 10) || 5000;
+    const { engine, tireSize, oilType, oilAmount, oilFilter, drainPlugSocket, lugNutSocket, wheelTorque, notes } = vehicleForm;
+    if (editingVehicleId) {
+      persistVehicles(vehicles.map((v) => (v.id === editingVehicleId ? { ...v, name, mileage, lastOilDate, oilInterval, engine, tireSize, oilType, oilAmount, oilFilter, drainPlugSocket, lugNutSocket, wheelTorque, notes } : v)));
+    } else {
+      persistVehicles([...vehicles, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, mileage, lastOilDate, oilInterval, engine, tireSize, oilType, oilAmount, oilFilter, drainPlugSocket, lugNutSocket, wheelTorque, notes, log: [] }]);
+    }
+    closeVehicleForm();
+  };
+  const deleteVehicle = (id) => persistVehicles(vehicles.filter((v) => v.id !== id));
+
+  // ---- Maintenance log CRUD (scoped to a vehicle) ----
+  const openAddLog = (vehicleId) => { setLogVehicleId(vehicleId); setEditingLogId(null); setLogForm(emptyLogForm); setShowLogForm(true); };
+  const openEditLog = (vehicleId, entry) => {
+    setLogVehicleId(vehicleId);
+    setEditingLogId(entry.id);
+    setLogForm({ description: entry.description, date: entry.date, mileage: entry.mileage != null ? String(entry.mileage) : "" });
+    setShowLogForm(true);
+  };
+  const closeLogForm = () => { setShowLogForm(false); setLogVehicleId(null); setEditingLogId(null); setLogForm(emptyLogForm); };
+  const submitLogForm = () => {
+    const description = logForm.description.trim();
+    if (!description || !logForm.date) return;
+    const mileage = logForm.mileage === "" ? null : parseInt(logForm.mileage, 10);
+    persistVehicles(vehicles.map((v) => {
+      if (v.id !== logVehicleId) return v;
+      const log = v.log || [];
+      if (editingLogId) {
+        return { ...v, log: log.map((e) => (e.id === editingLogId ? { ...e, description, date: logForm.date, mileage } : e)) };
+      }
+      return { ...v, log: [...log, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), description, date: logForm.date, mileage }] };
+    }));
+    closeLogForm();
+  };
+  const deleteLog = (vehicleId, entryId) => {
+    persistVehicles(vehicles.map((v) => (v.id === vehicleId ? { ...v, log: (v.log || []).filter((e) => e.id !== entryId) } : v)));
+  };
 
   const activeBills = bills.filter((b) => isBillActiveThisMonth(b, viewedMonth));
   const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, viewedMonth));
@@ -495,6 +677,114 @@ export default function HomeHub() {
     );
   };
 
+  const LogRow = ({ vehicleId, entry }) => (
+    <div className="row">
+      <div className="row-body pad">
+        <div style={{ minWidth: 0 }}>
+          <div className="row-name">{entry.description}</div>
+          <div className="row-sub">
+            {formatLogDate(entry.date)}
+            {entry.mileage != null && ` · ${fmtMiles(entry.mileage)}`}
+          </div>
+        </div>
+      </div>
+      {editMode && <Tools onEdit={() => openEditLog(vehicleId, entry)} onDelete={() => deleteLog(vehicleId, entry.id)} />}
+    </div>
+  );
+
+  const VehicleRow = ({ vehicle }) => {
+    const expanded = expandedVehicleId === vehicle.id;
+    const dueAt = oilDueAt(vehicle);
+    const log = [...(vehicle.log || [])].sort((a, b) => b.date.localeCompare(a.date));
+    return (
+      <div className="panel" style={{ marginBottom: 12 }}>
+        <div className="row">
+          <div
+            className="row-body pad"
+            onClick={() => setExpandedVehicleId(expanded ? null : vehicle.id)}
+            style={{ cursor: "pointer" }}
+          >
+            <div style={{ minWidth: 0 }}>
+              <div className="row-name">{vehicle.name}</div>
+              <div className="row-sub">{fmtMiles(vehicle.mileage)}{dueAt ? ` · Oil due at ${fmtMiles(dueAt)}` : ""}</div>
+            </div>
+            <ChevronDown size={16} color="var(--muted)" style={{ transition: "transform .2s", transform: expanded ? "rotate(180deg)" : "none", flex: "0 0 auto" }} />
+          </div>
+          {editMode && <Tools onEdit={() => openEditVehicle(vehicle)} onDelete={() => deleteVehicle(vehicle.id)} />}
+        </div>
+        {expanded && (
+          <div style={{ borderTop: "1px solid var(--line)", padding: "18px 16px 16px" }}>
+            {(vehicle.engine || vehicle.tireSize || vehicle.oilType || vehicle.oilAmount || vehicle.oilFilter || vehicle.drainPlugSocket || vehicle.lugNutSocket || vehicle.wheelTorque) && (
+              <div style={{ marginBottom: 22 }}>
+                <div className="eyebrow" style={{ marginBottom: 7 }}>Vehicle info</div>
+                <div className="hero-stats">
+                  {vehicle.engine && (
+                    <div className="stat"><span className="stat-key">Engine</span><span className="stat-val">{vehicle.engine}</span></div>
+                  )}
+                  {vehicle.tireSize && (
+                    <div className="stat"><span className="stat-key">Tires</span><span className="stat-val">{vehicle.tireSize}</span></div>
+                  )}
+                  {vehicle.oilType && (
+                    <div className="stat"><span className="stat-key">Oil type</span><span className="stat-val">{vehicle.oilType}</span></div>
+                  )}
+                  {vehicle.oilAmount && (
+                    <div className="stat"><span className="stat-key">Oil amount</span><span className="stat-val">{vehicle.oilAmount}</span></div>
+                  )}
+                  {vehicle.oilFilter && (
+                    <div className="stat"><span className="stat-key">Filter</span><span className="stat-val">{vehicle.oilFilter}</span></div>
+                  )}
+                  {vehicle.drainPlugSocket && (
+                    <div className="stat"><span className="stat-key">Drain plug socket</span><span className="stat-val">{vehicle.drainPlugSocket}</span></div>
+                  )}
+                  {vehicle.lugNutSocket && (
+                    <div className="stat"><span className="stat-key">Lug nut socket</span><span className="stat-val">{vehicle.lugNutSocket}</span></div>
+                  )}
+                  {vehicle.wheelTorque && (
+                    <div className="stat"><span className="stat-key">Wheel torque</span><span className="stat-val">{vehicle.wheelTorque}</span></div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {vehicle.notes && (
+              <div style={{ marginBottom: 22 }}>
+                <div className="eyebrow" style={{ marginBottom: 7 }}>Notes</div>
+                <div style={{ fontSize: 13.5, color: "var(--ink)", whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{vehicle.notes}</div>
+              </div>
+            )}
+
+            <div className="hero-stats" style={{ marginBottom: 22 }}>
+              <div className="stat">
+                <span className="stat-key"><span className="dot" style={{ background: "var(--ink)" }} />Mileage</span>
+                <span className="stat-val num">{fmtMiles(vehicle.mileage)}</span>
+              </div>
+              {vehicle.lastOilDate && (
+                <div className="stat">
+                  <span className="stat-key"><span className="dot" style={{ background: "var(--good)" }} />Oil changed</span>
+                  <span className="stat-val">{formatLogDate(vehicle.lastOilDate)}</span>
+                </div>
+              )}
+              <div className="stat">
+                <span className="stat-key"><span className="dot" style={{ background: "var(--accent)" }} />Next oil change</span>
+                <span className="stat-val num">{dueAt ? fmtMiles(dueAt) : "Set an interval"}</span>
+              </div>
+            </div>
+
+            <div className="sec tight">
+              <span className="eyebrow">Maintenance log · {log.length}</span>
+              {editMode && <button className="link" onClick={() => openAddLog(vehicle.id)}>Add entry</button>}
+            </div>
+            {log.length === 0 ? (
+              <div className="empty">No maintenance logged yet.</div>
+            ) : (
+              <div className="panel">{log.map((entry) => <LogRow key={entry.id} vehicleId={vehicle.id} entry={entry} />)}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const activeTab = TABS.find((t) => t.key === view);
 
   return (
@@ -521,6 +811,7 @@ export default function HomeHub() {
             {editMode ? <Check size={13} /> : <Lock size={13} />}
             {editMode ? "Done" : "Edit"}
           </button>
+          <button className="icon-btn bare" onClick={() => { setShowBackup(true); setBackupMessage(null); }} aria-label="Backup and restore"><DownloadCloud size={16} /></button>
           <button className="icon-btn bare" onClick={logout} aria-label="Log out"><LogOut size={16} /></button>
         </div>
       </header>
@@ -613,7 +904,7 @@ export default function HomeHub() {
                   <>
                     <button className="sec-toggle" onClick={() => setShowPaid((s) => !s)}>
                       <span className="eyebrow">Paid · {paidBills.length}</span>
-                      <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showPaid ? "rotate(180deg)" : "none" }} />
+                      <ChevronDown size={15} color="var(--muted)" style={{ transition: "transform .2s", transform: showPaid ? "rotate(180deg)" : "none" }} />
                     </button>
                     {showPaid && <div className="panel">{paidBills.map((b) => <BillRow key={b.id} bill={b} />)}</div>}
                   </>
@@ -623,7 +914,7 @@ export default function HomeHub() {
                   <>
                     <button className="sec-toggle" onClick={() => setShowInactive((s) => !s)}>
                       <span className="eyebrow">Not billed this month · {inactiveBills.length}</span>
-                      <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showInactive ? "rotate(180deg)" : "none" }} />
+                      <ChevronDown size={15} color="var(--muted)" style={{ transition: "transform .2s", transform: showInactive ? "rotate(180deg)" : "none" }} />
                     </button>
                     {showInactive && <div className="panel">{[...inactiveBills].sort((a, b) => a.dueDay - b.dueDay).map((b) => <BillRow key={b.id} bill={b} />)}</div>}
                   </>
@@ -732,16 +1023,36 @@ export default function HomeHub() {
               <>
                 <button className="sec-toggle" onClick={() => setShowCompleted((s) => !s)}>
                   <span className="eyebrow">Done · {completedReminders.length}</span>
-                  <ChevronDown size={15} color="var(--slate)" style={{ transition: "transform .2s", transform: showCompleted ? "rotate(180deg)" : "none" }} />
+                  <ChevronDown size={15} color="var(--muted)" style={{ transition: "transform .2s", transform: showCompleted ? "rotate(180deg)" : "none" }} />
                 </button>
                 {showCompleted && <div className="panel">{completedReminders.map((item) => <ReminderRow key={item.id} item={item} />)}</div>}
               </>
             )}
           </>
         )}
+
+        {/* ---------- VEHICLES ---------- */}
+        {view === "vehicles" && (
+          <>
+            {vehiclesError && <div className="notice-err">{vehiclesError}</div>}
+
+            <div className="sec tight">
+              <span className="eyebrow">Garage · {vehicles.length}</span>
+              {editMode && <button className="link" onClick={openAddVehicle}>Add vehicle</button>}
+            </div>
+
+            {vehiclesLoading ? (
+              <div className="empty">Loading…</div>
+            ) : vehicles.length === 0 ? (
+              <div className="empty">No vehicles yet. Tap Edit, then Add to start tracking one.</div>
+            ) : (
+              vehicles.map((v) => <VehicleRow key={v.id} vehicle={v} />)
+            )}
+          </>
+        )}
       </div>
 
-      {(saving || budgetSaving || remindersSaving) && (
+      {(saving || budgetSaving || remindersSaving || vehiclesSaving) && (
         <div className="saving"><span className="meta">Saving…</span></div>
       )}
 
@@ -893,6 +1204,180 @@ export default function HomeHub() {
               {reminderForm.repeatUnit && <div className="meta hint">Checking it off schedules the next one.</div>}
             </div>
             <button className="btn-primary" onClick={submitReminderForm} disabled={!reminderForm.name.trim() || !reminderForm.dueDate}>{editingReminderId ? "Save changes" : "Add reminder"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Vehicle sheet */}
+      {showVehicleForm && (
+        <div className="scrim" onClick={closeVehicleForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingVehicleId ? "Edit vehicle" : "New vehicle"}</span>
+              <button className="sheet-close" onClick={closeVehicleForm} aria-label="Close"><X size={17} /></button>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Name</span>
+              <input className="input" type="text" value={vehicleForm.name} onChange={(e) => setVehicleForm({ ...vehicleForm, name: e.target.value })} placeholder="2019 F-150" />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Oil change mileage</span>
+                <input className="input" type="number" value={vehicleForm.mileage} onChange={(e) => setVehicleForm({ ...vehicleForm, mileage: e.target.value })} placeholder="45230" />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Date changed</span>
+                <input className="input" type="date" value={vehicleForm.lastOilDate} onChange={(e) => setVehicleForm({ ...vehicleForm, lastOilDate: e.target.value })} />
+              </div>
+            </div>
+            <div className="hint" style={{ marginTop: -8, marginBottom: 16 }}>
+              Update these two whenever you change the oil — that's the only mileage this app needs.
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Change oil every (miles)</span>
+              <input className="input" type="number" value={vehicleForm.oilInterval} onChange={(e) => setVehicleForm({ ...vehicleForm, oilInterval: e.target.value })} placeholder="5000" />
+              <div className="hint">Next oil change = mileage above + this number.</div>
+            </div>
+
+            <div className="eyebrow" style={{ marginBottom: 10 }}>Vehicle info</div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Engine</span>
+                <input className="input" type="text" value={vehicleForm.engine} onChange={(e) => setVehicleForm({ ...vehicleForm, engine: e.target.value })} placeholder="5.0L V8" />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Tires</span>
+                <input className="input" type="text" value={vehicleForm.tireSize} onChange={(e) => setVehicleForm({ ...vehicleForm, tireSize: e.target.value })} placeholder="275/65R18" />
+              </div>
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Oil type</span>
+                <input className="input" type="text" value={vehicleForm.oilType} onChange={(e) => setVehicleForm({ ...vehicleForm, oilType: e.target.value })} placeholder="5W-30 synthetic" />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Oil amount</span>
+                <input className="input" type="text" value={vehicleForm.oilAmount} onChange={(e) => setVehicleForm({ ...vehicleForm, oilAmount: e.target.value })} placeholder="6 qt" />
+              </div>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Oil filter</span>
+              <input className="input" type="text" value={vehicleForm.oilFilter} onChange={(e) => setVehicleForm({ ...vehicleForm, oilFilter: e.target.value })} placeholder="FRAM PH10575" />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Drain plug socket</span>
+                <input className="input" type="text" value={vehicleForm.drainPlugSocket} onChange={(e) => setVehicleForm({ ...vehicleForm, drainPlugSocket: e.target.value })} placeholder="15mm" />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Lug nut socket</span>
+                <input className="input" type="text" value={vehicleForm.lugNutSocket} onChange={(e) => setVehicleForm({ ...vehicleForm, lugNutSocket: e.target.value })} placeholder="19mm" />
+              </div>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Wheel torque spec</span>
+              <input className="input" type="text" value={vehicleForm.wheelTorque} onChange={(e) => setVehicleForm({ ...vehicleForm, wheelTorque: e.target.value })} placeholder="150 ft-lb" />
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Notes (anything else)</span>
+              <textarea
+                className="input"
+                rows={3}
+                value={vehicleForm.notes}
+                onChange={(e) => setVehicleForm({ ...vehicleForm, notes: e.target.value })}
+                placeholder="Anything that doesn't fit above — known issues, part numbers, reminders for next time…"
+                style={{ resize: "vertical", fontFamily: "inherit" }}
+              />
+            </div>
+            <button className="btn-primary" onClick={submitVehicleForm} disabled={!vehicleForm.name.trim()}>{editingVehicleId ? "Save changes" : "Add vehicle"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Maintenance log entry sheet */}
+      {showLogForm && (
+        <div className="scrim" onClick={closeLogForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingLogId ? "Edit entry" : "Log maintenance"}</span>
+              <button className="sheet-close" onClick={closeLogForm} aria-label="Close"><X size={17} /></button>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">What was done</span>
+              <input className="input" type="text" value={logForm.description} onChange={(e) => setLogForm({ ...logForm, description: e.target.value })} placeholder="Oil change, tire rotation, brakes…" />
+            </div>
+            <div className="field-row">
+              <div className="field">
+                <span className="eyebrow field-label">Date</span>
+                <input className="input" type="date" value={logForm.date} onChange={(e) => setLogForm({ ...logForm, date: e.target.value })} />
+              </div>
+              <div className="field">
+                <span className="eyebrow field-label">Mileage</span>
+                <input className="input" type="number" value={logForm.mileage} onChange={(e) => setLogForm({ ...logForm, mileage: e.target.value })} placeholder="45230" />
+              </div>
+            </div>
+            <button className="btn-primary" onClick={submitLogForm} disabled={!logForm.description.trim() || !logForm.date}>{editingLogId ? "Save changes" : "Add entry"}</button>
+          </div>
+        </div>
+      )}
+
+      {/* Backup & restore sheet */}
+      {showBackup && (
+        <div className="scrim" onClick={() => setShowBackup(false)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">Backup & restore</span>
+              <button className="sheet-close" onClick={() => setShowBackup(false)} aria-label="Close"><X size={17} /></button>
+            </div>
+
+            <div style={{ fontSize: 13.5, color: "var(--muted)", lineHeight: 1.5, marginBottom: 20 }}>
+              This downloads everything — bills, budget, reminders, and vehicles — as one file you can save anywhere:
+              your phone's Files app, email it to yourself, or drop it in Google Drive or iCloud. Do this every so often
+              so your data lives in more than one place.
+            </div>
+
+            <button className="btn-primary" onClick={exportBackup} disabled={backupBusy}>
+              {backupBusy ? "Working…" : "Download backup"}
+            </button>
+
+            <div style={{ height: 1, background: "var(--line)", margin: "22px 0" }} />
+
+            <div className="eyebrow field-label">Restore from a backup file</div>
+            <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>
+              This replaces everything currently in the app with what's in the file. Use this if you ever need to move
+              to a new database or undo something that went badly wrong.
+            </div>
+            <label className="btn-secondary" style={{ display: "block", textAlign: "center", cursor: "pointer" }}>
+              Choose backup file…
+              <input type="file" accept="application/json" onChange={chooseRestoreFile} style={{ display: "none" }} />
+            </label>
+
+            {backupMessage && (
+              <div className={backupMessage.type === "err" ? "notice-err" : "notice"} style={{ marginTop: 16 }}>
+                <span className={backupMessage.type === "err" ? "" : "notice-text"}>{backupMessage.text}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Restore confirm dialog */}
+      {confirmRestore && (
+        <div className="dialog" onClick={() => setConfirmRestore(null)}>
+          <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
+            <div className="dialog-title">Replace everything with this backup?</div>
+            <p className="dialog-body">
+              This overwrites your current bills, budget, reminders, and vehicles with what's in the file
+              {confirmRestore.exportedAt ? ` (backed up ${formatLogDate(confirmRestore.exportedAt.slice(0, 10))})` : ""}.
+              This can't be undone.
+            </p>
+            <div className="dialog-actions">
+              <button className="btn-secondary" onClick={() => setConfirmRestore(null)}>Cancel</button>
+              <button className="btn-confirm" onClick={runRestore} disabled={backupBusy}>{backupBusy ? "Restoring…" : "Restore"}</button>
+            </div>
           </div>
         </div>
       )}

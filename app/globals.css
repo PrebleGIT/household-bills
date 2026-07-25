@@ -149,12 +149,23 @@ svg, .ring, .ring svg, .hdr-badge { outline: none !important; }
 .sheet-title { font-family: 'Source Serif 4', Georgia, serif; font-size: 22px; font-weight: 700; }
 .sheet-close { width: 32px; height: 32px; border-radius: 999px; background: #F5F3EE; display: flex; align-items: center; justify-content: center; color: var(--muted); }
 
-.field { margin-bottom: 16px; }
+.field { margin-bottom: 16px; min-width: 0; }
 .field-label { display: block; margin-bottom: 6px; }
 .field-row { display: flex; gap: 12px; }
-.field-row > .field { flex: 1; }
-.input { width: 100%; background: var(--bg); border: 1px solid var(--field-line); border-radius: 12px; padding: 12px 12px; font-size: 15px; color: var(--ink); }
+.field-row > .field { flex: 1; min-width: 0; }
+.field-row > .field > .field-label { min-height: 28px; }
+.input {
+  width: 100%; height: 46px; box-sizing: border-box;
+  background: var(--bg); border: 1px solid var(--field-line); border-radius: 12px;
+  padding: 0 12px; font-size: 15px; color: var(--ink);
+  -webkit-appearance: none; appearance: none;
+}
 .input:focus { outline: none; border-color: var(--accent); background: var(--surface); }
+input[type="date"].input, input[type="time"].input {
+  width: 100%; min-width: 0; height: 46px; box-sizing: border-box;
+  -webkit-appearance: none; appearance: none;
+}
+textarea.input { height: auto; padding: 12px; }
 .hint { margin-top: 7px; font-size: 11px; color: var(--muted); }
 
 .chips { display: grid; gap: 8px; }
