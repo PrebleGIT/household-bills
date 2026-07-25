@@ -104,21 +104,18 @@ any web-push VAPID key pair works fine.)
 a banner: "Get notified when a bill is due" → tap **Enable** → allow when iOS
 prompts you. Do this once per phone.
 
-**5. That's it.** Vercel's cron job checks once a day (around 9am Eastern) for
-any bill due that day and sends a notification if there's a match — the app
-only notifies about bills not yet marked paid. The home screen icon badge
-updates separately, any time you open the app, to show how many unpaid bills
-are already at or past their due date.
-
-Note: on Vercel's free Hobby plan, the daily cron job can fire any time within
-its scheduled hour, not at the exact minute — so don't expect it down to the
-second.
+**5. That's it.** Once set up, the app checks for bills due today (at the time
+set below) and reminders due at their own specific times, sending one
+notification per item, per day — see the next section for exactly how the
+timing works. The home screen icon badge updates separately, any time you open
+the app, to show how many unpaid bills and reminders are already at or past
+their date.
 
 ## Reminder times (and why the free plan needs one extra step)
 
-Each reminder has its own **Notify at** time. The check that sends notifications
-reads that time and only fires once the clock passes it — and it keeps a
-per-day log so nothing ever notifies twice.
+Each reminder has its own **Notify at** time, settable in 15-minute increments.
+The check that sends notifications reads that time and only fires once the
+clock passes it — and it keeps a per-day log so nothing ever notifies twice.
 
 **Set your timezone.** Vercel servers run on UTC. Add one more environment
 variable so times mean what you expect:
@@ -127,7 +124,7 @@ variable so times mean what you expect:
 |---|---|
 | `APP_TIMEZONE` | `America/New_York` |
 
-(Optional: `BILL_NOTIFY_TIME`, default `09:00`, sets the hour bills notify —
+(Optional: `BILL_NOTIFY_TIME`, default `08:00`, sets the hour bills notify —
 bills don't have individual times the way reminders do.)
 
 **The catch:** Vercel's free Hobby plan only allows a cron job to run **once

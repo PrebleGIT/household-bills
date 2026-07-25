@@ -7,7 +7,7 @@ const redis = Redis.fromEnv();
 // Vercel runs in UTC. Everything below is evaluated in your local zone.
 const TZ = process.env.APP_TIMEZONE || "America/New_York";
 // Bills don't carry their own time, so they all fire at this hour, local.
-const BILL_HOUR = process.env.BILL_NOTIFY_TIME || "09:00";
+const BILL_HOUR = process.env.BILL_NOTIFY_TIME || "08:00";
 
 const isBillActiveThisMonth = (bill, currentMonth) => {
   const freq = bill.frequencyMonths || 1;

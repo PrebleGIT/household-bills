@@ -137,6 +137,12 @@ const formatTime = (t) => {
   return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
 };
 
+// Every 15-minute mark in a day — the only choices offered for a reminder's notify time.
+const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
+  const value = `${pad2(Math.floor((i * 15) / 60))}:${pad2((i * 15) % 60)}`;
+  return { value, label: formatTime(value) };
+});
+
 function Ring({ pct, label, tone }) {
   const clamped = Math.min(100, Math.max(0, pct));
   const deg = (clamped / 100) * 360;
@@ -1185,7 +1191,11 @@ export default function HomeHub() {
               </div>
               <div className="field">
                 <span className="eyebrow field-label">Notify at</span>
-                <input className="input" type="time" value={reminderForm.dueTime} onChange={(e) => setReminderForm({ ...reminderForm, dueTime: e.target.value })} />
+                <select className="input" value={reminderForm.dueTime} onChange={(e) => setReminderForm({ ...reminderForm, dueTime: e.target.value })}>
+                  {TIME_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
             </div>
             <div className="field">
