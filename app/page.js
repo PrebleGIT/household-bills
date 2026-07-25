@@ -175,6 +175,7 @@ export default function HomeHub() {
   const realYear = realNow.getFullYear();
   const realDay = realNow.getDate();
   const todayISO = toISODate(realNow);
+  const nowHM = `${pad2(realNow.getHours())}:${pad2(realNow.getMinutes())}`;
 
   const [viewedMonth, setViewedMonth] = useState(realMonth);
   const [viewedYear, setViewedYear] = useState(realYear);
@@ -660,7 +661,10 @@ export default function HomeHub() {
 
   const ReminderRow = ({ item }) => {
     // Due today counts as needing attention, same as bills.
-    const pastDue = !item.done && item.dueDate <= todayISO;
+    const pastDue = !item.done && (
+      item.dueDate < todayISO ||
+      (item.dueDate === todayISO && (item.dueTime || "00:00") <= nowHM)
+    );
     const cls = ["row", pastDue ? "is-alert" : "", item.done ? "is-done" : ""].filter(Boolean).join(" ");
     return (
       <div className={cls}>
