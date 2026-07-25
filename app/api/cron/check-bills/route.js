@@ -84,17 +84,10 @@ export async function GET(request) {
     ...remindersDue.map((r) => r.name),
   ];
 
-  const totalDue = billsDue.length + remindersDue.length;
-  let summary;
-  if (billsDue.length > 0 && remindersDue.length > 0) {
-    summary = `${totalDue} things due today`;
-  } else if (billsDue.length > 0) {
-    summary = billsDue.length === 1 ? "1 bill due today" : `${billsDue.length} bills due today`;
-  } else {
-    summary = remindersDue.length === 1 ? remindersDue[0].name : `${remindersDue.length} reminders`;
-  }
-  const title = `House Hub: ${summary}`;
-
+  // Keep this exactly "House Hub" — iOS shows its own "from House Hub" line
+  // automatically for web push, and matching it here avoids a redundant
+  // third line on the lock screen.
+  const title = "House Hub";
   const body = lines.length <= 3 ? lines.join(", ") : `${lines.slice(0, 3).join(", ")} + ${lines.length - 3} more`;
   const payload = JSON.stringify({ title, body, url: "/", badgeCount: waitingCount });
 
