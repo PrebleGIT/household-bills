@@ -513,6 +513,7 @@ export default function HomeHub() {
     }));
   };
   const deleteReminder = (id) => persistReminders(reminders.filter((r) => r.id !== id));
+  const clearCompletedReminders = () => persistReminders(reminders.filter((r) => r.repeatUnit || !r.done));
 
   // ---- Vehicle CRUD ----
   const openAddVehicle = () => { setEditingVehicleId(null); setVehicleForm(emptyVehicleForm); setShowVehicleForm(true); };
@@ -805,7 +806,7 @@ export default function HomeHub() {
             {activeTab && <activeTab.icon size={19} color="#fff" strokeWidth={2.2} />}
           </div>
           <div>
-            <div className="hdr-title">Home Hub</div>
+            <div className="hdr-title">House Hub</div>
             <div className="hdr-sub">
               {needsAttention > 0
                 ? `${needsAttention} need${needsAttention === 1 ? "s" : ""} attention`
@@ -1035,7 +1036,16 @@ export default function HomeHub() {
                   <span className="eyebrow">Done · {completedReminders.length}</span>
                   <ChevronDown size={15} color="var(--muted)" style={{ transition: "transform .2s", transform: showCompleted ? "rotate(180deg)" : "none" }} />
                 </button>
-                {showCompleted && <div className="panel">{completedReminders.map((item) => <ReminderRow key={item.id} item={item} />)}</div>}
+                {showCompleted && (
+                  <>
+                    {editMode && (
+                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                        <button className="link" onClick={clearCompletedReminders}>Clear all</button>
+                      </div>
+                    )}
+                    <div className="panel">{completedReminders.map((item) => <ReminderRow key={item.id} item={item} />)}</div>
+                  </>
+                )}
               </>
             )}
           </>

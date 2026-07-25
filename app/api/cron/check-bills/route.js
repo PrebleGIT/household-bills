@@ -85,14 +85,15 @@ export async function GET(request) {
   ];
 
   const totalDue = billsDue.length + remindersDue.length;
-  let title;
+  let summary;
   if (billsDue.length > 0 && remindersDue.length > 0) {
-    title = `${totalDue} things due today`;
+    summary = `${totalDue} things due today`;
   } else if (billsDue.length > 0) {
-    title = billsDue.length === 1 ? "1 bill due today" : `${billsDue.length} bills due today`;
+    summary = billsDue.length === 1 ? "1 bill due today" : `${billsDue.length} bills due today`;
   } else {
-    title = remindersDue.length === 1 ? remindersDue[0].name : `${remindersDue.length} reminders`;
+    summary = remindersDue.length === 1 ? remindersDue[0].name : `${remindersDue.length} reminders`;
   }
+  const title = `House Hub: ${summary}`;
 
   const body = lines.length <= 3 ? lines.join(", ") : `${lines.slice(0, 3).join(", ")} + ${lines.length - 3} more`;
   const payload = JSON.stringify({ title, body, url: "/", badgeCount: waitingCount });

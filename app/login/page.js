@@ -35,7 +35,7 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "24px" }}>
       <form onSubmit={submit} style={{ width: "100%", maxWidth: 320 }}>
-        <div className="eyebrow">Home Hub</div>
+        <div className="eyebrow">House Hub</div>
         <h1 style={{ fontSize: 26, fontWeight: 600, letterSpacing: "-0.02em", margin: "8px 0 26px" }}>
           Enter your code
         </h1>
