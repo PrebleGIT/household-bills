@@ -1,7 +1,7 @@
 import "./globals.css";
 
 export const metadata = {
-  title: "House Hub",
+  title: "Home Hub",
   description: "Bills, budget, daily to-dos, and house maintenance",
   manifest: "/manifest.json",
   icons: {
@@ -15,7 +15,7 @@ export const metadata = {
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "House Hub",
+    title: "Home Hub",
   },
 };
 

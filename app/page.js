@@ -811,7 +811,7 @@ export default function HomeHub() {
             {activeTab && <activeTab.icon size={19} color="#fff" strokeWidth={2.2} />}
           </div>
           <div>
-            <div className="hdr-title">House Hub</div>
+            <div className="hdr-title">Home Hub</div>
             <div className="hdr-sub">
               {needsAttention > 0
                 ? `${needsAttention} need${needsAttention === 1 ? "s" : ""} attention`

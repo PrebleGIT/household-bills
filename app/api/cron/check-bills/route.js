@@ -84,10 +84,10 @@ export async function GET(request) {
     ...remindersDue.map((r) => r.name),
   ];
 
-  // Keep this exactly "House Hub" — iOS shows its own "from House Hub" line
+  // Keep this exactly "Home Hub" — iOS shows its own "from Home Hub" line
   // automatically for web push, and matching it here avoids a redundant
   // third line on the lock screen.
-  const title = "House Hub";
+  const title = "Home Hub";
   const body = lines.length <= 3 ? lines.join(", ") : `${lines.slice(0, 3).join(", ")} + ${lines.length - 3} more`;
   const payload = JSON.stringify({ title, body, url: "/", badgeCount: waitingCount });
 
