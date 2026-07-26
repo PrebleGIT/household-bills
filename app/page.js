@@ -98,14 +98,18 @@ const relativeDateLabel = (iso, todayISO) => {
 };
 
 // The single rule behind the home-screen badge. The cron job in
-// app/api/cron/check-bills/route.js mirrors this exactly so the two never disagree.
-const countNeedsAttention = (bills, reminders, day, month, todayISO) => {
+// app/api/cron/check-bills/route.js mirrors the bill half of this exactly.
+// Reminders now factor in time-of-day too, so this always agrees with which
+// rows are actually shown red.
+const countNeedsAttention = (bills, reminders, day, month, todayISO, nowHM) => {
   const billsDue = bills.filter(
     (b) => !b.paid && isBillActiveThisMonth(b, month) && b.dueDay <= day
   ).length;
-  const remindersDue = reminders.filter(
-    (r) => (r.repeatUnit || !r.done) && r.dueDate <= todayISO
-  ).length;
+  const remindersDue = reminders.filter((r) => {
+    if (!(r.repeatUnit || !r.done)) return false;
+    if (r.dueDate < todayISO) return true;
+    return r.dueDate === todayISO && (r.dueTime || "00:00") <= nowHM;
+  }).length;
   return billsDue + remindersDue;
 };
 
@@ -310,7 +314,8 @@ export default function HomeHub() {
     if (loading || remindersLoading) return; // don't badge off half-loaded data
     const now = new Date();
     const waiting = countNeedsAttention(
-      bills, reminders, now.getDate(), now.getMonth() + 1, toISODate(now)
+      bills, reminders, now.getDate(), now.getMonth() + 1, toISODate(now),
+      `${pad2(now.getHours())}:${pad2(now.getMinutes())}`
     );
     if (waiting > 0) navigator.setAppBadge(waiting).catch(() => {});
     else if ("clearAppBadge" in navigator) navigator.clearAppBadge().catch(() => {});
@@ -604,7 +609,7 @@ export default function HomeHub() {
     ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
   ].sort((a, b) => b.amount - a.amount);
 
-  const needsAttention = countNeedsAttention(bills, reminders, realDay, realMonth, todayISO);
+  const needsAttention = countNeedsAttention(bills, reminders, realDay, realMonth, todayISO, nowHM);
   const pendingReminders = reminders.filter((r) => r.repeatUnit || !r.done).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
   const completedReminders = reminders.filter((r) => !r.repeatUnit && r.done).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
   const groupedReminders = GROUP_ORDER.map((label) => ({
