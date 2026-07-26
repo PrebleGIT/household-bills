@@ -1014,7 +1014,7 @@ export default function HomeHub() {
 
             <div className="sec tight">
               <span className="eyebrow">Scheduled · {pendingReminders.length}</span>
-              {editMode && <button className="link" onClick={openAddReminder}>Add reminder</button>}
+              <button className="link" onClick={openAddReminder}>Add reminder</button>
             </div>
 
             {remindersLoading ? (
