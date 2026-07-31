@@ -14,24 +14,13 @@ self.addEventListener("push", (event) => {
     data: { url: data.url || "/" },
   };
 
-  const badgeCount = typeof data.badgeCount === "number" ? data.badgeCount : null;
-
-  event.waitUntil(
-    (async () => {
-      await self.registration.showNotification(title, options);
-      if (badgeCount !== null && "setAppBadge" in self.registration) {
-        try {
-          if (badgeCount > 0) {
-            await self.registration.setAppBadge(badgeCount);
-          } else {
-            await self.registration.clearAppBadge();
-          }
-        } catch (e) {
-          // Badge API not supported in this context — safe to ignore.
-        }
-      }
-    })()
-  );
+  // Deliberately not touching the app badge here. The app already updates it
+  // in the foreground every time it's opened, and there's a documented Apple
+  // bug where setting/clearing the badge in the same moment a notification
+  // is shown can cause the notification to disappear almost immediately.
+  // Touching the badge and showing a notification in the same push event
+  // was doing exactly that, so this only shows the notification now.
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {

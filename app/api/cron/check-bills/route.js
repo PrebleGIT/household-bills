@@ -69,12 +69,6 @@ export async function GET(request) {
       !alreadySent.has(`rem:${r.id}`)
   );
 
-  // Must match countNeedsAttention() in app/page.js exactly, or the badge will
-  // disagree with what the app shows.
-  const waitingCount =
-    activeUnpaidBills.filter((b) => b.dueDay <= today).length +
-    reminders.filter((r) => (r.repeatUnit || !r.done) && r.dueDate <= todayISO).length;
-
   if (billsDue.length === 0 && remindersDue.length === 0) {
     return NextResponse.json({ ok: true, sent: 0, message: "Nothing to send right now.", nowTime });
   }
@@ -89,7 +83,10 @@ export async function GET(request) {
   // third line on the lock screen.
   const title = "Home Hub";
   const body = lines.length <= 3 ? lines.join(", ") : `${lines.slice(0, 3).join(", ")} + ${lines.length - 3} more`;
-  const payload = JSON.stringify({ title, body, url: "/", badgeCount: waitingCount });
+  // No badgeCount here anymore — the service worker no longer touches the
+  // badge on push (see public/sw.js for why). The app still updates the
+  // badge itself every time it's opened.
+  const payload = JSON.stringify({ title, body, url: "/" });
 
   const subscriptions = (await redis.get("push-subscriptions")) || [];
   let sent = 0;
