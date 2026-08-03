@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare, Car,
+  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare, Car, ShoppingCart,
   ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff, DownloadCloud,
 } from "lucide-react";
 
@@ -27,6 +27,7 @@ const TABS = [
   { key: "budget", label: "Budget", icon: PieChart },
   { key: "reminders", label: "Reminders", icon: CheckSquare },
   { key: "vehicles", label: "Vehicles", icon: Car },
+  { key: "groceries", label: "Grocery", icon: ShoppingCart },
 ];
 const REPEAT_OPTIONS = [
   { label: "None", value: null, unit: null },
@@ -238,6 +239,25 @@ export default function HomeHub() {
   const [editingLogId, setEditingLogId] = useState(null);
   const [logForm, setLogForm] = useState(emptyLogForm);
 
+  const [groceryItems, setGroceryItems] = useState([]);
+  const [groceriesLoading, setGroceriesLoading] = useState(true);
+  const [groceriesSaving, setGroceriesSaving] = useState(false);
+  const [groceriesError, setGroceriesError] = useState(null);
+  const [groceryInput, setGroceryInput] = useState("");
+
+  const [recipes, setRecipes] = useState([]);
+  const [recipesLoading, setRecipesLoading] = useState(true);
+  const [recipesSaving, setRecipesSaving] = useState(false);
+  const [recipesError, setRecipesError] = useState(null);
+  const [expandedRecipeId, setExpandedRecipeId] = useState(null);
+  const [showRecipeForm, setShowRecipeForm] = useState(false);
+  const [editingRecipeId, setEditingRecipeId] = useState(null);
+  const [recipeForm, setRecipeForm] = useState({ name: "", ingredientsText: "" });
+  // Which ingredients are excluded from "add to list" this time (e.g. you
+  // already have them). Not persisted — just a per-visit selection, defaults
+  // to everything included.
+  const [recipeExcluded, setRecipeExcluded] = useState({});
+
   const load = useCallback(async (quiet) => {
     if (!quiet) setLoading(true);
     setError(null);
@@ -284,7 +304,29 @@ export default function HomeHub() {
     finally { setVehiclesLoading(false); }
   }, []);
 
-  useEffect(() => { load(); loadBudget(); loadReminders(); loadVehicles(); }, [load, loadBudget, loadReminders, loadVehicles]);
+  const loadGroceries = useCallback(async (quiet) => {
+    if (!quiet) setGroceriesLoading(true);
+    setGroceriesError(null);
+    try {
+      const res = await fetch("/api/groceries", { cache: "no-store" });
+      if (!res.ok) throw new Error("failed");
+      setGroceryItems(await res.json());
+    } catch (e) { setGroceriesError("List didn't load. Check your connection and pull down to retry."); }
+    finally { setGroceriesLoading(false); }
+  }, []);
+
+  const loadRecipes = useCallback(async (quiet) => {
+    if (!quiet) setRecipesLoading(true);
+    setRecipesError(null);
+    try {
+      const res = await fetch("/api/recipes", { cache: "no-store" });
+      if (!res.ok) throw new Error("failed");
+      setRecipes(await res.json());
+    } catch (e) { setRecipesError("Recipes didn't load. Check your connection and pull down to retry."); }
+    finally { setRecipesLoading(false); }
+  }, []);
+
+  useEffect(() => { load(); loadBudget(); loadReminders(); loadVehicles(); loadGroceries(); loadRecipes(); }, [load, loadBudget, loadReminders, loadVehicles, loadGroceries, loadRecipes]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -327,7 +369,7 @@ export default function HomeHub() {
     if (typeof document === "undefined") return;
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      load(true); loadBudget(true); loadReminders(true); loadVehicles(true);
+      load(true); loadBudget(true); loadReminders(true); loadVehicles(true); loadGroceries(true); loadRecipes(true);
     };
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
@@ -337,7 +379,7 @@ export default function HomeHub() {
       window.removeEventListener("focus", refresh);
       clearInterval(timer);
     };
-  }, [load, loadBudget, loadReminders, loadVehicles]);
+  }, [load, loadBudget, loadReminders, loadVehicles, loadGroceries, loadRecipes]);
 
   const persist = async (next) => {
     setBills(next); setSaving(true); setError(null);
@@ -373,6 +415,24 @@ export default function HomeHub() {
       if (!res.ok) throw new Error("failed");
     } catch (e) { setVehiclesError("That change didn't save. Check your connection and try again."); }
     finally { setVehiclesSaving(false); }
+  };
+
+  const persistGroceries = async (next) => {
+    setGroceryItems(next); setGroceriesSaving(true); setGroceriesError(null);
+    try {
+      const res = await fetch("/api/groceries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      if (!res.ok) throw new Error("failed");
+    } catch (e) { setGroceriesError("That change didn't save. Check your connection and try again."); }
+    finally { setGroceriesSaving(false); }
+  };
+
+  const persistRecipes = async (next) => {
+    setRecipes(next); setRecipesSaving(true); setRecipesError(null);
+    try {
+      const res = await fetch("/api/recipes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+      if (!res.ok) throw new Error("failed");
+    } catch (e) { setRecipesError("That change didn't save. Check your connection and try again."); }
+    finally { setRecipesSaving(false); }
   };
 
   const logout = async () => { await fetch("/api/logout", { method: "POST" }); window.location.href = "/login"; };
@@ -585,6 +645,74 @@ export default function HomeHub() {
     persistVehicles(vehicles.map((v) => (v.id === vehicleId ? { ...v, log: (v.log || []).filter((e) => e.id !== entryId) } : v)));
   };
 
+  // ---- Grocery list — deliberately no Edit-lock, no dates, no amounts.
+  // Meant to be as fast to use as a paper list: type, hit add, check things
+  // off, done. Nothing here is destructive enough to need protecting.
+  const addGroceryItem = () => {
+    const name = groceryInput.trim();
+    if (!name) return;
+    persistGroceries([...groceryItems, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, checked: false }]);
+    setGroceryInput("");
+  };
+  const toggleGrocery = (id) => persistGroceries(groceryItems.map((i) => (i.id === id ? { ...i, checked: !i.checked } : i)));
+  const deleteGrocery = (id) => persistGroceries(groceryItems.filter((i) => i.id !== id));
+  const clearCheckedGroceries = () => persistGroceries(groceryItems.filter((i) => !i.checked));
+
+  // ---- Recipes — a name plus a list of ingredient lines. "Add to list"
+  // merges them into groceries, skipping anything already there by matching
+  // text (case-insensitive). This is a straight text match, not smart
+  // quantity math — "2 cups flour" and "1 cup flour" are different lines.
+  const openAddRecipe = () => { setEditingRecipeId(null); setRecipeForm({ name: "", ingredientsText: "" }); setShowRecipeForm(true); };
+  const openEditRecipe = (r) => {
+    setEditingRecipeId(r.id);
+    setRecipeForm({ name: r.name, ingredientsText: (r.ingredients || []).map((i) => i.text).join("\n") });
+    setShowRecipeForm(true);
+  };
+  const closeRecipeForm = () => { setShowRecipeForm(false); setEditingRecipeId(null); setRecipeForm({ name: "", ingredientsText: "" }); };
+  const submitRecipeForm = () => {
+    const name = recipeForm.name.trim();
+    if (!name) return;
+    const ingredients = recipeForm.ingredientsText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((text) => ({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), text }));
+    if (editingRecipeId) {
+      persistRecipes(recipes.map((r) => (r.id === editingRecipeId ? { ...r, name, ingredients } : r)));
+    } else {
+      persistRecipes([...recipes, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, ingredients }]);
+    }
+    closeRecipeForm();
+  };
+  const deleteRecipe = (id) => persistRecipes(recipes.filter((r) => r.id !== id));
+
+  const isIngredientSelected = (recipeId, ingId) => !(recipeExcluded[recipeId] || new Set()).has(ingId);
+  const toggleIngredientSelected = (recipeId, ingId) => {
+    setRecipeExcluded((prev) => {
+      const next = new Set(prev[recipeId] || []);
+      if (next.has(ingId)) next.delete(ingId);
+      else next.add(ingId);
+      return { ...prev, [recipeId]: next };
+    });
+  };
+
+  const addRecipeToGroceries = (recipe) => {
+    const existing = new Set(groceryItems.map((i) => i.name.trim().toLowerCase()));
+    const toAdd = [];
+    for (const ing of recipe.ingredients || []) {
+      if (!isIngredientSelected(recipe.id, ing.id)) continue; // you already have this one
+      const key = ing.text.trim().toLowerCase();
+      if (existing.has(key)) continue;
+      existing.add(key); // guards against the recipe itself listing something twice
+      toAdd.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: ing.text, checked: false });
+    }
+    if (toAdd.length > 0) persistGroceries([...groceryItems, ...toAdd]);
+    setRecipeExcluded((prev) => ({ ...prev, [recipe.id]: new Set() })); // reset to all-selected for next time
+  };
+
+  const groceryUnchecked = groceryItems.filter((i) => !i.checked);
+  const groceryChecked = groceryItems.filter((i) => i.checked);
+
   const activeBills = bills.filter((b) => isBillActiveThisMonth(b, viewedMonth));
   const inactiveBills = bills.filter((b) => !isBillActiveThisMonth(b, viewedMonth));
   const isPaidForView = (b) => b.paid && isCurrentMonth;
@@ -795,6 +923,76 @@ export default function HomeHub() {
             ) : (
               <div className="panel">{log.map((entry) => <LogRow key={entry.id} vehicleId={vehicle.id} entry={entry} />)}</div>
             )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const GroceryRow = ({ item }) => (
+    <div className={`row ${item.checked ? "is-done" : ""}`}>
+      <button className="row-check" onClick={() => toggleGrocery(item.id)} aria-label={item.checked ? "Mark not gotten" : "Mark gotten"}>
+        <span className={`box ${item.checked ? "on" : ""}`}>
+          {item.checked && <Check size={13} color="#fff" strokeWidth={3} />}
+        </span>
+      </button>
+      <div className="row-body">
+        <div className="row-name">{item.name}</div>
+      </div>
+      <div className="row-tools">
+        <button className="row-tool" onClick={() => deleteGrocery(item.id)} aria-label="Remove"><Trash2 size={14} /></button>
+      </div>
+    </div>
+  );
+
+  const RecipeRow = ({ recipe }) => {
+    const expanded = expandedRecipeId === recipe.id;
+    const ingredients = recipe.ingredients || [];
+    const count = ingredients.length;
+    const selectedCount = ingredients.filter((ing) => isIngredientSelected(recipe.id, ing.id)).length;
+    return (
+      <div className="panel" style={{ marginBottom: 10 }}>
+        <div className="row">
+          <div className="row-body pad" onClick={() => setExpandedRecipeId(expanded ? null : recipe.id)} style={{ cursor: "pointer" }}>
+            <div style={{ minWidth: 0 }}>
+              <div className="row-name">{recipe.name}</div>
+              <div className="row-sub">{count} ingredient{count === 1 ? "" : "s"}</div>
+            </div>
+            <ChevronDown size={16} color="var(--muted)" style={{ transition: "transform .2s", transform: expanded ? "rotate(180deg)" : "none", flex: "0 0 auto" }} />
+          </div>
+          {editMode && <Tools onEdit={() => openEditRecipe(recipe)} onDelete={() => deleteRecipe(recipe.id)} />}
+        </div>
+        {expanded && (
+          <div style={{ borderTop: "1px solid var(--line)", padding: "14px 16px 16px" }}>
+            {count === 0 ? (
+              <div className="empty">No ingredients added yet.</div>
+            ) : (
+              <>
+                <div className="hint" style={{ marginTop: 0, marginBottom: 10 }}>
+                  Uncheck anything you already have — only checked items get added.
+                </div>
+                {ingredients.map((ing) => {
+                  const selected = isIngredientSelected(recipe.id, ing.id);
+                  return (
+                    <button
+                      key={ing.id}
+                      onClick={() => toggleIngredientSelected(recipe.id, ing.id)}
+                      style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "7px 0", textAlign: "left" }}
+                    >
+                      <span className={`box ${selected ? "on" : ""}`} style={{ width: 20, height: 20, flex: "0 0 auto" }}>
+                        {selected && <Check size={11} color="#fff" strokeWidth={3} />}
+                      </span>
+                      <span style={{ fontSize: 14, color: selected ? "var(--ink)" : "var(--muted)", textDecoration: selected ? "none" : "line-through" }}>
+                        {ing.text}
+                      </span>
+                    </button>
+                  );
+                })}
+              </>
+            )}
+            <button className="btn-primary" style={{ marginTop: 14 }} onClick={() => addRecipeToGroceries(recipe)} disabled={selectedCount === 0}>
+              Add {selectedCount > 0 ? `${selectedCount} ` : ""}to grocery list
+            </button>
           </div>
         )}
       </div>
@@ -1075,9 +1273,73 @@ export default function HomeHub() {
             )}
           </>
         )}
+
+        {/* ---------- GROCERIES ---------- */}
+        {view === "groceries" && (
+          <>
+            {groceriesError && <div className="notice-err">{groceriesError}</div>}
+
+            <div style={{ display: "flex", gap: 10, marginTop: 4, marginBottom: 20 }}>
+              <input
+                className="input"
+                type="text"
+                value={groceryInput}
+                onChange={(e) => setGroceryInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addGroceryItem(); }}
+                placeholder="Add an item…"
+                autoComplete="off"
+                style={{ flex: 1 }}
+              />
+              <button className="btn-primary" style={{ width: "auto", padding: "0 20px", marginTop: 0 }} onClick={addGroceryItem} disabled={!groceryInput.trim()}>
+                Add
+              </button>
+            </div>
+
+            {groceriesLoading ? (
+              <div className="empty">Loading…</div>
+            ) : groceryItems.length === 0 ? (
+              <div className="empty">List's empty — add whatever you need this week.</div>
+            ) : (
+              <>
+                <div className="panel">
+                  {groceryUnchecked.length === 0 ? (
+                    <div className="empty">Everything's in the cart.</div>
+                  ) : (
+                    groceryUnchecked.map((item) => <GroceryRow key={item.id} item={item} />)
+                  )}
+                </div>
+
+                {groceryChecked.length > 0 && (
+                  <>
+                    <div className="sec">
+                      <span className="eyebrow">Got it · {groceryChecked.length}</span>
+                      <button className="link" onClick={clearCheckedGroceries}>Clear</button>
+                    </div>
+                    <div className="panel">
+                      {groceryChecked.map((item) => <GroceryRow key={item.id} item={item} />)}
+                    </div>
+                  </>
+                )}
+              </>
+            )}
+
+            <div className="sec">
+              <span className="eyebrow">Recipes · {recipes.length}</span>
+              {editMode && <button className="link" onClick={openAddRecipe}>Add recipe</button>}
+            </div>
+            {recipesError && <div className="notice-err">{recipesError}</div>}
+            {recipesLoading ? (
+              <div className="empty">Loading…</div>
+            ) : recipes.length === 0 ? (
+              <div className="empty">No recipes yet. Tap Edit, then Add to save one.</div>
+            ) : (
+              recipes.map((r) => <RecipeRow key={r.id} recipe={r} />)
+            )}
+          </>
+        )}
       </div>
 
-      {(saving || budgetSaving || remindersSaving || vehiclesSaving) && (
+      {(saving || budgetSaving || remindersSaving || vehiclesSaving || groceriesSaving || recipesSaving) && (
         <div className="saving"><span className="meta">Saving…</span></div>
       )}
 
@@ -1407,6 +1669,36 @@ export default function HomeHub() {
               <button className="btn-secondary" onClick={() => setConfirmRestore(null)}>Cancel</button>
               <button className="btn-confirm" onClick={runRestore} disabled={backupBusy}>{backupBusy ? "Restoring…" : "Restore"}</button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Recipe sheet */}
+      {showRecipeForm && (
+        <div className="scrim" onClick={closeRecipeForm}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="grab" />
+            <div className="sheet-hd">
+              <span className="sheet-title">{editingRecipeId ? "Edit recipe" : "New recipe"}</span>
+              <button className="sheet-close" onClick={closeRecipeForm} aria-label="Close"><X size={17} /></button>
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Recipe name</span>
+              <input className="input" type="text" value={recipeForm.name} onChange={(e) => setRecipeForm({ ...recipeForm, name: e.target.value })} placeholder="Taco night" />
+            </div>
+            <div className="field">
+              <span className="eyebrow field-label">Ingredients — one per line</span>
+              <textarea
+                className="input"
+                rows={7}
+                value={recipeForm.ingredientsText}
+                onChange={(e) => setRecipeForm({ ...recipeForm, ingredientsText: e.target.value })}
+                placeholder={"Ground beef\nTaco shells\nShredded cheese\nSalsa"}
+                style={{ resize: "vertical", fontFamily: "inherit" }}
+              />
+              <div className="hint">Each line becomes one grocery item when you add this recipe to the list.</div>
+            </div>
+            <button className="btn-primary" onClick={submitRecipeForm} disabled={!recipeForm.name.trim()}>{editingRecipeId ? "Save changes" : "Add recipe"}</button>
           </div>
         </div>
       )}
