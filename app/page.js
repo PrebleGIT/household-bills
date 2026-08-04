@@ -732,6 +732,7 @@ export default function HomeHub() {
   const leftover = totalIncome - totalExpenses;
   const weeklyLeftover = leftover / 4;
   const allocatedPct = totalIncome > 0 ? Math.round((totalExpenses / totalIncome) * 100) : 0;
+  const sortedIncomes = [...budgetIncomes].sort((a, b) => b.amount - a.amount);
   const combinedExpenses = [
     ...activeBills.map((b) => ({ id: b.id, name: b.name, amount: b.amount, kind: "bill", ref: b })),
     ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
@@ -1182,7 +1183,7 @@ export default function HomeHub() {
                   <div className="empty">No income added yet.</div>
                 ) : (
                   <div className="panel">
-                    {budgetIncomes.map((inc) => <AmountRow key={inc.id} name={inc.name} amount={inc.amount} onEdit={() => openEditIncome(inc)} onDelete={() => deleteIncome(inc.id)} />)}
+                    {sortedIncomes.map((inc) => <AmountRow key={inc.id} name={inc.name} amount={inc.amount} onEdit={() => openEditIncome(inc)} onDelete={() => deleteIncome(inc.id)} />)}
                   </div>
                 )}
 
