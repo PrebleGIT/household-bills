@@ -76,7 +76,8 @@ const parseISODate = (iso) => {
 };
 const addInterval = (iso, value, unit) => {
   const d = parseISODate(iso);
-  if (unit === "weeks") d.setDate(d.getDate() + value * 7);
+  if (unit === "days") d.setDate(d.getDate() + value);
+  else if (unit === "weeks") d.setDate(d.getDate() + value * 7);
   else if (unit === "months") d.setMonth(d.getMonth() + value);
   else if (unit === "years") d.setFullYear(d.getFullYear() + value);
   return toISODate(d);
@@ -740,6 +741,10 @@ export default function HomeHub() {
 
   const needsAttention = countNeedsAttention(bills, reminders, realDay, realMonth, todayISO, nowHM);
   const pendingReminders = reminders.filter((r) => r.repeatUnit || !r.done).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  // A safety net in case a push notification is missed — overdue items plus
+  // anything due in the next 3 days, so this is visible just by opening the app.
+  const upcomingCutoffISO = addInterval(todayISO, 3, "days");
+  const upcomingReminders = pendingReminders.filter((r) => r.dueDate <= upcomingCutoffISO);
   const completedReminders = reminders.filter((r) => !r.repeatUnit && r.done).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
   const groupedReminders = GROUP_ORDER.map((label) => ({
     label,
@@ -1215,6 +1220,15 @@ export default function HomeHub() {
         {view === "reminders" && (
           <>
             {remindersError && <div className="notice-err">{remindersError}</div>}
+
+            {!remindersLoading && upcomingReminders.length > 0 && (
+              <div style={{ marginBottom: 26 }}>
+                <div className="eyebrow" style={{ marginBottom: 8 }}>Upcoming (next 3 days) · {upcomingReminders.length}</div>
+                <div className="panel">
+                  {upcomingReminders.map((item) => <ReminderRow key={`up-${item.id}`} item={item} />)}
+                </div>
+              </div>
+            )}
 
             <div className="sec tight">
               <span className="eyebrow">Scheduled · {pendingReminders.length}</span>
