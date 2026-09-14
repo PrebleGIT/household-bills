@@ -47,9 +47,8 @@ export async function GET(request) {
   const { date: todayISO, time: nowTime, day: today, month: currentMonth } = localParts();
 
   const bills = (await redis.get("bills")) || [];
-  const reminders = (await redis.get("reminders-list")) || [];
 
-  // So the same item never notifies twice in one day, even if this runs
+  // So the same bill never notifies twice in one day, even if this runs
   // every 15 minutes. The log resets when the date rolls over.
   const rawLog = (await redis.get("notify-log")) || {};
   const log = rawLog.date === todayISO ? rawLog : { date: todayISO, ids: [] };
@@ -61,31 +60,17 @@ export async function GET(request) {
     (b) => b.dueDay === today && nowTime >= BILL_HOUR && !alreadySent.has(`bill:${b.id}`)
   );
 
-  const remindersDue = reminders.filter(
-    (r) =>
-      r.dueDate === todayISO &&
-      (r.repeatUnit || !r.done) &&
-      nowTime >= (r.dueTime || "09:00") &&
-      !alreadySent.has(`rem:${r.id}`)
-  );
-
-  if (billsDue.length === 0 && remindersDue.length === 0) {
+  if (billsDue.length === 0) {
     return NextResponse.json({ ok: true, sent: 0, message: "Nothing to send right now.", nowTime });
   }
 
-  const lines = [
-    ...billsDue.map((b) => `${b.name} ($${b.amount.toFixed(2)})`),
-    ...remindersDue.map((r) => r.name),
-  ];
+  const lines = billsDue.map((b) => `${b.name} ($${b.amount.toFixed(2)})`);
 
   // Keep this exactly "Home Hub" — iOS shows its own "from Home Hub" line
   // automatically for web push, and matching it here avoids a redundant
   // third line on the lock screen.
   const title = "Home Hub";
   const body = lines.length <= 3 ? lines.join(", ") : `${lines.slice(0, 3).join(", ")} + ${lines.length - 3} more`;
-  // No badgeCount here anymore — the service worker no longer touches the
-  // badge on push (see public/sw.js for why). The app still updates the
-  // badge itself every time it's opened.
   const payload = JSON.stringify({ title, body, url: "/" });
 
   const subscriptions = (await redis.get("push-subscriptions")) || [];
@@ -107,13 +92,9 @@ export async function GET(request) {
   }
 
   if (sent > 0) {
-    const ids = [
-      ...log.ids,
-      ...billsDue.map((b) => `bill:${b.id}`),
-      ...remindersDue.map((r) => `rem:${r.id}`),
-    ];
+    const ids = [...log.ids, ...billsDue.map((b) => `bill:${b.id}`)];
     await redis.set("notify-log", { date: todayISO, ids });
   }
 
-  return NextResponse.json({ ok: true, sent, billsDue: billsDue.length, remindersDue: remindersDue.length, nowTime });
+  return NextResponse.json({ ok: true, sent, billsDue: billsDue.length, nowTime });
 }

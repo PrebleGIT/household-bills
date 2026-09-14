@@ -23,7 +23,6 @@ OUT = "/mnt/user-data/outputs/home-hub-preview.jsx"
 # ---- storage keys used by every feature ----
 STORAGE_KEYS = '''const BILLS_KEY = "bills-list";
 const BUDGET_KEY = "budget-data";
-const REMINDERS_KEY = "reminders-list";
 const VEHICLES_KEY = "vehicles-list";
 const GROCERIES_KEY = "groceries-list";
 const RECIPES_KEY = "recipes-list";'''
@@ -60,26 +59,6 @@ const SEED_BUDGET = {
     { id: "item-9", name: "Oura Ring", amount: 5.99 },
   ],
 };
-
-const SEED_REMINDERS = [
-  { id: "r1", name: "Trash Pickup", dueDate: "2026-07-27", dueTime: "16:00", repeatValue: 1, repeatUnit: "weeks", done: false },
-  { id: "r2", name: "Loretta $225", dueDate: "2026-07-24", dueTime: "08:00", repeatValue: 1, repeatUnit: "weeks", done: false },
-  { id: "r3", name: "Clean / Refill Robovac", dueDate: "2026-08-02", dueTime: "16:00", repeatValue: 2, repeatUnit: "weeks", done: false },
-  { id: "r4", name: "Murphy Nails", dueDate: "2026-07-23", dueTime: "19:00", repeatValue: 1, repeatUnit: "months", done: false },
-  { id: "r5", name: "Clean Air Purifier Filter", dueDate: "2026-07-28", dueTime: "16:00", repeatValue: 1, repeatUnit: "months", done: false },
-  { id: "r6", name: "Clean Bathtub Jets", dueDate: "2026-08-22", dueTime: "16:00", repeatValue: 1, repeatUnit: "months", done: false },
-  { id: "r7", name: "Softener Cleaner", dueDate: "2026-08-04", dueTime: "16:00", repeatValue: 4, repeatUnit: "months", done: false },
-  { id: "r8", name: "Replace Furnace Filter", dueDate: "2026-09-26", dueTime: "16:00", repeatValue: 4, repeatUnit: "months", done: false },
-  { id: "r9", name: "Replace Air Purifier Filter", dueDate: "2026-08-01", dueTime: "16:00", repeatValue: 6, repeatUnit: "months", done: false },
-  { id: "r10", name: "Drain Water Heater", dueDate: "2026-07-01", dueTime: "16:00", repeatValue: 1, repeatUnit: "years", done: false },
-  { id: "r11", name: "Drain Pressure Tank", dueDate: "2026-07-01", dueTime: "16:00", repeatValue: 1, repeatUnit: "years", done: false },
-  { id: "r12", name: "Dryer Vent", dueDate: "2026-07-01", dueTime: "16:00", repeatValue: 1, repeatUnit: "years", done: false },
-  { id: "r13", name: "Clean AC Unit", dueDate: "2027-06-12", dueTime: "16:00", repeatValue: 1, repeatUnit: "years", done: false },
-  { id: "r14", name: "Anode Rod", dueDate: "2027-08-01", dueTime: "16:00", repeatValue: 2, repeatUnit: "years", done: false },
-  { id: "r15", name: "Reschedule Dentist", dueDate: "2026-07-24", dueTime: "08:00", repeatValue: null, repeatUnit: null, done: false },
-  { id: "r16", name: "Natural Gas Rates", dueDate: "2026-12-19", dueTime: "16:00", repeatValue: null, repeatUnit: null, done: false },
-  { id: "r17", name: "Electric Rates", dueDate: "2027-01-03", dueTime: "16:00", repeatValue: null, repeatUnit: null, done: false },
-];
 
 const SEED_VEHICLES = [
   {
@@ -155,15 +134,6 @@ FETCH_TO_STORAGE = [
       }
     } catch (e) { setBudgetIncomes(SEED_BUDGET.incomes); setBudgetItems(SEED_BUDGET.items); }'''),
 
-    ('''      const res = await fetch("/api/reminders", { cache: "no-store" });
-      if (!res.ok) throw new Error("failed");
-      setReminders(await res.json());
-    } catch (e) { setRemindersError("Reminders didn't load. Check your connection and pull down to retry."); }''',
-     '''      const r = await window.storage.get(REMINDERS_KEY, true);
-      if (r && r.value) setReminders(JSON.parse(r.value));
-      else { setReminders(SEED_REMINDERS); await window.storage.set(REMINDERS_KEY, JSON.stringify(SEED_REMINDERS), true); }
-    } catch (e) { setReminders(SEED_REMINDERS); }'''),
-
     ('''      const res = await fetch("/api/vehicles", { cache: "no-store" });
       if (!res.ok) throw new Error("failed");
       setVehicles(await res.json());
@@ -195,8 +165,6 @@ FETCH_TO_STORAGE = [
      '      const r = await window.storage.set(BILLS_KEY, JSON.stringify(next), true);\n      if (!r) setError("That change didn\'t save. Check your connection and try again.");'),
     ('      const res = await fetch("/api/budget", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ incomes, items }) });\n      if (!res.ok) throw new Error("failed");',
      '      const r = await window.storage.set(BUDGET_KEY, JSON.stringify({ incomes, items }), true);\n      if (!r) setBudgetError("That change didn\'t save. Check your connection and try again.");'),
-    ('      const res = await fetch("/api/reminders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });\n      if (!res.ok) throw new Error("failed");',
-     '      const r = await window.storage.set(REMINDERS_KEY, JSON.stringify(next), true);\n      if (!r) setRemindersError("That change didn\'t save. Check your connection and try again.");'),
     ('      const res = await fetch("/api/vehicles", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });\n      if (!res.ok) throw new Error("failed");',
      '      const r = await window.storage.set(VEHICLES_KEY, JSON.stringify(next), true);\n      if (!r) setVehiclesError("That change didn\'t save. Check your connection and try again.");'),
     ('      const res = await fetch("/api/groceries", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });\n      if (!res.ok) throw new Error("failed");',

@@ -105,17 +105,11 @@ a banner: "Get notified when a bill is due" → tap **Enable** → allow when iO
 prompts you. Do this once per phone.
 
 **5. That's it.** Once set up, the app checks for bills due today (at the time
-set below) and reminders due at their own specific times, sending one
-notification per item, per day — see the next section for exactly how the
-timing works. The home screen icon badge updates separately, any time you open
-the app, to show how many unpaid bills and reminders are already at or past
-their date.
+set below) and sends one notification per bill, per day. The home screen icon
+badge updates separately, any time you open the app, to show how many unpaid
+bills are already at or past their due date.
 
-## Reminder times (and why the free plan needs one extra step)
-
-Each reminder has its own **Notify at** time, settable in 15-minute increments.
-The check that sends notifications reads that time and only fires once the
-clock passes it — and it keeps a per-day log so nothing ever notifies twice.
+## Notification timing
 
 **Set your timezone.** Vercel servers run on UTC. Add one more environment
 variable so times mean what you expect:
@@ -124,27 +118,16 @@ variable so times mean what you expect:
 |---|---|
 | `APP_TIMEZONE` | `America/New_York` |
 
-(Optional: `BILL_NOTIFY_TIME`, default `08:00`, sets the hour bills notify —
-bills don't have individual times the way reminders do.)
+(Optional: `BILL_NOTIFY_TIME`, default `08:00`, sets the hour bills notify.)
 
-**The catch:** Vercel's free Hobby plan only allows a cron job to run **once
-per day**, and it fires anywhere within its scheduled hour. So out of the box,
-everything notifies in one batch each morning regardless of the times you set.
+Vercel's free Hobby plan allows a cron job to run **once per day**, firing
+anywhere within its scheduled hour (set in `vercel.json`) — that's all bills
+need, since each one only checks against a single daily time, not its own
+specific time of day. Nothing further to set up beyond the timezone above.
 
-To make per-reminder times actually work, have a free external scheduler ping
-the same endpoint every 15 minutes:
-
-1. Sign up at [cron-job.org](https://cron-job.org) (free).
-2. Create a job pointing at `https://YOUR-APP.vercel.app/api/cron/check-bills`
-3. Schedule: every 15 minutes.
-4. Under the request's custom headers, add:
-   `Authorization: Bearer YOUR_CRON_SECRET`
-   (the same value you set for `CRON_SECRET` in Vercel)
-5. Save.
-
-Nothing in the code changes — the endpoint is safe to call often, since the
-per-day log stops repeat notifications. You can leave the daily Vercel cron in
-`vercel.json` as a backstop or delete that entry entirely.
-
-The alternative is Vercel Pro ($20/mo), which allows per-minute crons directly.
-For a two-person household app the free external scheduler is the sensible route.
+(Earlier versions of this app also had reminders with their own per-item
+notify times, which needed an external scheduler hitting this endpoint every
+15 minutes to work properly — reminders have since been removed, so that
+extra step is no longer necessary. If you'd set up a cron-job.org job for
+that earlier, it's harmless to leave running — the per-day log still stops
+duplicate notifications — or you can delete it now that it's not needed.)

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import {
-  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, CheckSquare, Car, ShoppingCart,
+  Plus, Pencil, Trash2, RotateCcw, X, Check, Wallet, PieChart, Car, ShoppingCart,
   ChevronDown, ChevronLeft, ChevronRight, LogOut, Lock, Bell, BellOff, DownloadCloud,
 } from "lucide-react";
 
@@ -25,22 +25,9 @@ const FREQUENCIES = [
 const TABS = [
   { key: "bills", label: "Bills", icon: Wallet },
   { key: "budget", label: "Budget", icon: PieChart },
-  { key: "reminders", label: "Reminders", icon: CheckSquare },
   { key: "vehicles", label: "Vehicles", icon: Car },
   { key: "groceries", label: "Grocery", icon: ShoppingCart },
 ];
-const REPEAT_OPTIONS = [
-  { label: "None", value: null, unit: null },
-  { label: "Weekly", value: 1, unit: "weeks" },
-  { label: "Bi-Weekly", value: 2, unit: "weeks" },
-  { label: "Monthly", value: 1, unit: "months" },
-  { label: "Quarterly", value: 3, unit: "months" },
-  { label: "Every 4 Mo", value: 4, unit: "months" },
-  { label: "Every 6 Mo", value: 6, unit: "months" },
-  { label: "Yearly", value: 1, unit: "years" },
-  { label: "Every 2 Yr", value: 2, unit: "years" },
-];
-
 const money = (n) => `$${n.toFixed(2)}`;
 
 const ordinal = (n) => {
@@ -70,54 +57,17 @@ const dueMonthsLabel = (frequencyMonths, anchorMonth) => {
 
 const pad2 = (n) => String(n).padStart(2, "0");
 const toISODate = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-const parseISODate = (iso) => {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Date(y, m - 1, d);
-};
-const addInterval = (iso, value, unit) => {
-  const d = parseISODate(iso);
-  if (unit === "days") d.setDate(d.getDate() + value);
-  else if (unit === "weeks") d.setDate(d.getDate() + value * 7);
-  else if (unit === "months") d.setMonth(d.getMonth() + value);
-  else if (unit === "years") d.setFullYear(d.getFullYear() + value);
-  return toISODate(d);
-};
-const repeatLabelFor = (value, unit) => {
-  const match = REPEAT_OPTIONS.find((o) => o.value === value && o.unit === unit);
-  return match ? match.label : "One-time";
-};
-const groupLabelFor = (r) => (r.repeatUnit ? repeatLabelFor(r.repeatValue, r.repeatUnit) : "One-time");
-const GROUP_ORDER = [...REPEAT_OPTIONS.slice(1).map((o) => o.label), "One-time"];
-const relativeDateLabel = (iso, todayISO) => {
-  const d = parseISODate(iso);
-  const today = parseISODate(todayISO);
-  const diffDays = Math.round((d - today) / 86400000);
-  if (diffDays === 0) return "Today";
-  if (diffDays === 1) return "Tomorrow";
-  if (diffDays === -1) return "Yesterday";
-  const withYear = d.getFullYear() !== today.getFullYear();
-  return `${MONTH_SHORT[d.getMonth()]} ${d.getDate()}${withYear ? ` ${d.getFullYear()}` : ""}`;
-};
 
 // The single rule behind the home-screen badge. The cron job in
-// app/api/cron/check-bills/route.js mirrors the bill half of this exactly.
-// Reminders now factor in time-of-day too, so this always agrees with which
-// rows are actually shown red.
-const countNeedsAttention = (bills, reminders, day, month, todayISO, nowHM) => {
-  const billsDue = bills.filter(
+// app/api/cron/check-bills/route.js mirrors this exactly.
+const countNeedsAttention = (bills, day, month) => {
+  return bills.filter(
     (b) => !b.paid && isBillActiveThisMonth(b, month) && b.dueDay <= day
   ).length;
-  const remindersDue = reminders.filter((r) => {
-    if (!(r.repeatUnit || !r.done)) return false;
-    if (r.dueDate < todayISO) return true;
-    return r.dueDate === todayISO && (r.dueTime || "00:00") <= nowHM;
-  }).length;
-  return billsDue + remindersDue;
 };
 
 const emptyBillForm = { name: "", dueDay: "", amount: "", paymentType: "Bank Acc.", frequencyMonths: 1, anchorMonth: new Date().getMonth() + 1 };
 const emptySimpleForm = { name: "", amount: "" };
-const emptyReminderForm = { name: "", dueDate: toISODate(new Date()), dueTime: "09:00", repeatValue: null, repeatUnit: null };
 const emptyVehicleForm = { name: "", mileage: "", lastOilDate: "", oilInterval: "5000", engine: "", tireSize: "", oilType: "", oilAmount: "", oilFilter: "", drainPlugSocket: "", lugNutSocket: "", wheelTorque: "", notes: "" };
 
 // Enter mileage only when you actually change the oil — the next change is
@@ -134,20 +84,6 @@ const formatLogDate = (iso) => {
   return `${MONTH_SHORT[m - 1]} ${d}, ${y}`;
 };
 const fmtMiles = (n) => (typeof n === "number" ? `${n.toLocaleString()} mi` : "");
-
-const formatTime = (t) => {
-  if (!t) return "";
-  const [h, m] = t.split(":").map(Number);
-  const suffix = h >= 12 ? "PM" : "AM";
-  const hour = h % 12 === 0 ? 12 : h % 12;
-  return `${hour}:${String(m).padStart(2, "0")} ${suffix}`;
-};
-
-// Every 15-minute mark in a day — the only choices offered for a reminder's notify time.
-const TIME_OPTIONS = Array.from({ length: 96 }, (_, i) => {
-  const value = `${pad2(Math.floor((i * 15) / 60))}:${pad2((i * 15) % 60)}`;
-  return { value, label: formatTime(value) };
-});
 
 function Ring({ pct, label, tone }) {
   const clamped = Math.min(100, Math.max(0, pct));
@@ -181,7 +117,6 @@ export default function HomeHub() {
   const realYear = realNow.getFullYear();
   const realDay = realNow.getDate();
   const todayISO = toISODate(realNow);
-  const nowHM = `${pad2(realNow.getHours())}:${pad2(realNow.getMinutes())}`;
 
   const [viewedMonth, setViewedMonth] = useState(realMonth);
   const [viewedYear, setViewedYear] = useState(realYear);
@@ -217,15 +152,6 @@ export default function HomeHub() {
   const [showItemForm, setShowItemForm] = useState(false);
   const [editingItemId, setEditingItemId] = useState(null);
   const [itemForm, setItemForm] = useState(emptySimpleForm);
-
-  const [reminders, setReminders] = useState([]);
-  const [remindersLoading, setRemindersLoading] = useState(true);
-  const [remindersSaving, setRemindersSaving] = useState(false);
-  const [remindersError, setRemindersError] = useState(null);
-  const [showReminderForm, setShowReminderForm] = useState(false);
-  const [editingReminderId, setEditingReminderId] = useState(null);
-  const [reminderForm, setReminderForm] = useState(emptyReminderForm);
-  const [showCompleted, setShowCompleted] = useState(false);
 
   const [vehicles, setVehicles] = useState([]);
   const [vehiclesLoading, setVehiclesLoading] = useState(true);
@@ -283,17 +209,6 @@ export default function HomeHub() {
     finally { setBudgetLoading(false); }
   }, []);
 
-  const loadReminders = useCallback(async (quiet) => {
-    if (!quiet) setRemindersLoading(true);
-    setRemindersError(null);
-    try {
-      const res = await fetch("/api/reminders", { cache: "no-store" });
-      if (!res.ok) throw new Error("failed");
-      setReminders(await res.json());
-    } catch (e) { setRemindersError("Reminders didn't load. Check your connection and pull down to retry."); }
-    finally { setRemindersLoading(false); }
-  }, []);
-
   const loadVehicles = useCallback(async (quiet) => {
     if (!quiet) setVehiclesLoading(true);
     setVehiclesError(null);
@@ -327,7 +242,7 @@ export default function HomeHub() {
     finally { setRecipesLoading(false); }
   }, []);
 
-  useEffect(() => { load(); loadBudget(); loadReminders(); loadVehicles(); loadGroceries(); loadRecipes(); }, [load, loadBudget, loadReminders, loadVehicles, loadGroceries, loadRecipes]);
+  useEffect(() => { load(); loadBudget(); loadVehicles(); loadGroceries(); loadRecipes(); }, [load, loadBudget, loadVehicles, loadGroceries, loadRecipes]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -354,15 +269,12 @@ export default function HomeHub() {
 
   useEffect(() => {
     if (typeof window === "undefined" || !("setAppBadge" in navigator)) return;
-    if (loading || remindersLoading) return; // don't badge off half-loaded data
+    if (loading) return; // don't badge off half-loaded data
     const now = new Date();
-    const waiting = countNeedsAttention(
-      bills, reminders, now.getDate(), now.getMonth() + 1, toISODate(now),
-      `${pad2(now.getHours())}:${pad2(now.getMinutes())}`
-    );
+    const waiting = countNeedsAttention(bills, now.getDate(), now.getMonth() + 1);
     if (waiting > 0) navigator.setAppBadge(waiting).catch(() => {});
     else if ("clearAppBadge" in navigator) navigator.clearAppBadge().catch(() => {});
-  }, [bills, reminders, loading, remindersLoading]);
+  }, [bills, loading]);
 
   // Pull the latest from the shared database whenever the app comes back into
   // view, and every 45s while it's open, so both phones stay in step.
@@ -370,7 +282,7 @@ export default function HomeHub() {
     if (typeof document === "undefined") return;
     const refresh = () => {
       if (document.visibilityState !== "visible") return;
-      load(true); loadBudget(true); loadReminders(true); loadVehicles(true); loadGroceries(true); loadRecipes(true);
+      load(true); loadBudget(true); loadVehicles(true); loadGroceries(true); loadRecipes(true);
     };
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
@@ -380,7 +292,7 @@ export default function HomeHub() {
       window.removeEventListener("focus", refresh);
       clearInterval(timer);
     };
-  }, [load, loadBudget, loadReminders, loadVehicles, loadGroceries, loadRecipes]);
+  }, [load, loadBudget, loadVehicles, loadGroceries, loadRecipes]);
 
   const persist = async (next) => {
     setBills(next); setSaving(true); setError(null);
@@ -398,15 +310,6 @@ export default function HomeHub() {
       if (!res.ok) throw new Error("failed");
     } catch (e) { setBudgetError("That change didn't save. Check your connection and try again."); }
     finally { setBudgetSaving(false); }
-  };
-
-  const persistReminders = async (next) => {
-    setReminders(next); setRemindersSaving(true); setRemindersError(null);
-    try {
-      const res = await fetch("/api/reminders", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
-      if (!res.ok) throw new Error("failed");
-    } catch (e) { setRemindersError("That change didn't save. Check your connection and try again."); }
-    finally { setRemindersSaving(false); }
   };
 
   const persistVehicles = async (next) => {
@@ -492,7 +395,7 @@ export default function HomeHub() {
       if (!res.ok) throw new Error("failed");
       setConfirmRestore(null);
       setBackupMessage({ type: "ok", text: "Restored. Reloading…" });
-      await Promise.all([load(true), loadBudget(true), loadReminders(true), loadVehicles(true)]);
+      await Promise.all([load(true), loadBudget(true), loadVehicles(true)]);
       setBackupMessage({ type: "ok", text: "Restored from backup." });
     } catch (e) {
       setBackupMessage({ type: "err", text: "Couldn't restore that backup. Check your connection and try again." });
@@ -551,35 +454,6 @@ export default function HomeHub() {
     closeItemForm();
   };
   const deleteItem = (id) => persistBudget(budgetIncomes, budgetItems.filter((i) => i.id !== id));
-
-  const openAddReminder = () => { setEditingReminderId(null); setReminderForm(emptyReminderForm); setShowReminderForm(true); };
-  const openEditReminder = (item) => {
-    setEditingReminderId(item.id);
-    setReminderForm({ name: item.name, dueDate: item.dueDate, dueTime: item.dueTime || "09:00", repeatValue: item.repeatValue, repeatUnit: item.repeatUnit });
-    setShowReminderForm(true);
-  };
-  const closeReminderForm = () => { setShowReminderForm(false); setEditingReminderId(null); setReminderForm(emptyReminderForm); };
-  const submitReminderForm = () => {
-    const name = reminderForm.name.trim();
-    if (!name || !reminderForm.dueDate) return;
-    const { repeatValue, repeatUnit, dueDate } = reminderForm;
-    const dueTime = reminderForm.dueTime || "09:00";
-    if (editingReminderId) {
-      persistReminders(reminders.map((r) => (r.id === editingReminderId ? { ...r, name, dueDate, dueTime, repeatValue, repeatUnit } : r)));
-    } else {
-      persistReminders([...reminders, { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name, dueDate, dueTime, repeatValue, repeatUnit, done: false }]);
-    }
-    closeReminderForm();
-  };
-  const toggleReminder = (id) => {
-    persistReminders(reminders.map((r) => {
-      if (r.id !== id) return r;
-      if (r.repeatUnit) return { ...r, dueDate: addInterval(r.dueDate, r.repeatValue, r.repeatUnit) };
-      return { ...r, done: !r.done };
-    }));
-  };
-  const deleteReminder = (id) => persistReminders(reminders.filter((r) => r.id !== id));
-  const clearCompletedReminders = () => persistReminders(reminders.filter((r) => r.repeatUnit || !r.done));
 
   // ---- Vehicle CRUD ----
   const openAddVehicle = () => { setEditingVehicleId(null); setVehicleForm(emptyVehicleForm); setShowVehicleForm(true); };
@@ -739,17 +613,7 @@ export default function HomeHub() {
     ...budgetItems.map((i) => ({ id: i.id, name: i.name, amount: i.amount, kind: "item", ref: i })),
   ].sort((a, b) => b.amount - a.amount);
 
-  const needsAttention = countNeedsAttention(bills, reminders, realDay, realMonth, todayISO, nowHM);
-  const pendingReminders = reminders.filter((r) => r.repeatUnit || !r.done).sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-  // A safety net in case a push notification is missed — overdue items plus
-  // anything due in the next 3 days, so this is visible just by opening the app.
-  const upcomingCutoffISO = addInterval(todayISO, 3, "days");
-  const upcomingReminders = pendingReminders.filter((r) => r.dueDate <= upcomingCutoffISO);
-  const completedReminders = reminders.filter((r) => !r.repeatUnit && r.done).sort((a, b) => b.dueDate.localeCompare(a.dueDate));
-  const groupedReminders = GROUP_ORDER.map((label) => ({
-    label,
-    items: pendingReminders.filter((r) => groupLabelFor(r) === label),
-  })).filter((g) => g.items.length > 0);
+  const needsAttention = countNeedsAttention(bills, realDay, realMonth);
 
   const Tools = ({ onEdit, onDelete }) => (
     <div className="row-tools">
@@ -798,34 +662,6 @@ export default function HomeHub() {
       {editMode && <Tools onEdit={onEdit} onDelete={onDelete} />}
     </div>
   );
-
-  const ReminderRow = ({ item }) => {
-    // Due today counts as needing attention, same as bills.
-    const pastDue = !item.done && (
-      item.dueDate < todayISO ||
-      (item.dueDate === todayISO && (item.dueTime || "00:00") <= nowHM)
-    );
-    const cls = ["row", pastDue ? "is-alert" : "", item.done ? "is-done" : ""].filter(Boolean).join(" ");
-    return (
-      <div className={cls}>
-        <button className="row-check" onClick={() => toggleReminder(item.id)} aria-label={item.done ? "Mark not done" : "Mark done"}>
-          <span className={`box ${item.done ? "on" : ""} ${pastDue ? "warn" : ""}`}>
-            {item.done && <Check size={13} color="#fff" strokeWidth={3} />}
-          </span>
-        </button>
-        <div className="row-body">
-          <div style={{ minWidth: 0 }}>
-            <div className="row-name">{item.name}</div>
-            <div className="row-sub">
-              {relativeDateLabel(item.dueDate, todayISO)}
-              {item.dueTime && ` · ${formatTime(item.dueTime)}`}
-            </div>
-          </div>
-        </div>
-        {editMode && <Tools onEdit={() => openEditReminder(item)} onDelete={() => deleteReminder(item.id)} />}
-      </div>
-    );
-  };
 
   const LogRow = ({ vehicleId, entry }) => (
     <div className="row">
@@ -1216,59 +1052,6 @@ export default function HomeHub() {
           </>
         )}
 
-        {/* ---------- REMINDERS ---------- */}
-        {view === "reminders" && (
-          <>
-            {remindersError && <div className="notice-err">{remindersError}</div>}
-
-            {!remindersLoading && upcomingReminders.length > 0 && (
-              <div style={{ marginBottom: 26 }}>
-                <div className="eyebrow" style={{ marginBottom: 8 }}>Upcoming (next 3 days) · {upcomingReminders.length}</div>
-                <div className="panel">
-                  {upcomingReminders.map((item) => <ReminderRow key={`up-${item.id}`} item={item} />)}
-                </div>
-              </div>
-            )}
-
-            <div className="sec tight">
-              <span className="eyebrow">Scheduled · {pendingReminders.length}</span>
-              <button className="link" onClick={openAddReminder}>Add reminder</button>
-            </div>
-
-            {remindersLoading ? (
-              <div className="empty">Loading…</div>
-            ) : pendingReminders.length === 0 ? (
-              <div className="empty">Nothing scheduled. Tap Edit, then Add to set one up.</div>
-            ) : (
-              groupedReminders.map((group, i) => (
-                <div key={group.label} style={{ marginTop: i === 0 ? 0 : 20 }}>
-                  <div className="eyebrow" style={{ marginBottom: 8 }}>{group.label} · {group.items.length}</div>
-                  <div className="panel">{group.items.map((item) => <ReminderRow key={item.id} item={item} />)}</div>
-                </div>
-              ))
-            )}
-
-            {completedReminders.length > 0 && (
-              <>
-                <button className="sec-toggle" onClick={() => setShowCompleted((s) => !s)}>
-                  <span className="eyebrow">Done · {completedReminders.length}</span>
-                  <ChevronDown size={15} color="var(--muted)" style={{ transition: "transform .2s", transform: showCompleted ? "rotate(180deg)" : "none" }} />
-                </button>
-                {showCompleted && (
-                  <>
-                    {editMode && (
-                      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
-                        <button className="link" onClick={clearCompletedReminders}>Clear all</button>
-                      </div>
-                    )}
-                    <div className="panel">{completedReminders.map((item) => <ReminderRow key={item.id} item={item} />)}</div>
-                  </>
-                )}
-              </>
-            )}
-          </>
-        )}
-
         {/* ---------- VEHICLES ---------- */}
         {view === "vehicles" && (
           <>
@@ -1354,7 +1137,7 @@ export default function HomeHub() {
         )}
       </div>
 
-      {(saving || budgetSaving || remindersSaving || vehiclesSaving || groceriesSaving || recipesSaving) && (
+      {(saving || budgetSaving || vehiclesSaving || groceriesSaving || recipesSaving) && (
         <div className="saving"><span className="meta">Saving…</span></div>
       )}
 
@@ -1463,53 +1246,6 @@ export default function HomeHub() {
               <input className="input" type="number" step="0.01" value={itemForm.amount} onChange={(e) => setItemForm({ ...itemForm, amount: e.target.value })} placeholder="0.00" />
             </div>
             <button className="btn-primary" onClick={submitItemForm} disabled={!itemForm.name.trim()}>{editingItemId ? "Save changes" : "Add expense"}</button>
-          </div>
-        </div>
-      )}
-
-      {/* Reminder sheet */}
-      {showReminderForm && (
-        <div className="scrim" onClick={closeReminderForm}>
-          <div className="sheet" onClick={(e) => e.stopPropagation()}>
-            <div className="grab" />
-            <div className="sheet-hd">
-              <span className="sheet-title">{editingReminderId ? "Edit reminder" : "New reminder"}</span>
-              <button className="sheet-close" onClick={closeReminderForm} aria-label="Close"><X size={17} /></button>
-            </div>
-            <div className="field">
-              <span className="eyebrow field-label">What needs doing</span>
-              <input className="input" type="text" value={reminderForm.name} onChange={(e) => setReminderForm({ ...reminderForm, name: e.target.value })} placeholder="Change furnace filter" />
-            </div>
-            <div className="field-row">
-              <div className="field">
-                <span className="eyebrow field-label">First due</span>
-                <input className="input" type="date" value={reminderForm.dueDate} onChange={(e) => setReminderForm({ ...reminderForm, dueDate: e.target.value })} />
-              </div>
-              <div className="field">
-                <span className="eyebrow field-label">Notify at</span>
-                <select className="input" value={reminderForm.dueTime} onChange={(e) => setReminderForm({ ...reminderForm, dueTime: e.target.value })}>
-                  {TIME_OPTIONS.map((opt) => (
-                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div className="field">
-              <span className="eyebrow field-label">Repeats</span>
-              <div className="chips chips-3">
-                {REPEAT_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.label}
-                    className={`chip ${reminderForm.repeatValue === opt.value && reminderForm.repeatUnit === opt.unit ? "on" : ""}`}
-                    onClick={() => setReminderForm({ ...reminderForm, repeatValue: opt.value, repeatUnit: opt.unit })}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-              {reminderForm.repeatUnit && <div className="meta hint">Checking it off schedules the next one.</div>}
-            </div>
-            <button className="btn-primary" onClick={submitReminderForm} disabled={!reminderForm.name.trim() || !reminderForm.dueDate}>{editingReminderId ? "Save changes" : "Add reminder"}</button>
           </div>
         </div>
       )}
@@ -1640,7 +1376,7 @@ export default function HomeHub() {
             </div>
 
             <div style={{ fontSize: 13.5, color: "var(--muted)", lineHeight: 1.5, marginBottom: 20 }}>
-              This downloads everything — bills, budget, reminders, and vehicles — as one file you can save anywhere:
+              This downloads everything — bills, budget, vehicles, groceries, and recipes — as one file you can save anywhere:
               your phone's Files app, email it to yourself, or drop it in Google Drive or iCloud. Do this every so often
               so your data lives in more than one place.
             </div>
@@ -1676,7 +1412,7 @@ export default function HomeHub() {
           <div className="dialog-card" onClick={(e) => e.stopPropagation()}>
             <div className="dialog-title">Replace everything with this backup?</div>
             <p className="dialog-body">
-              This overwrites your current bills, budget, reminders, and vehicles with what's in the file
+              This overwrites your current bills, budget, vehicles, groceries, and recipes with what's in the file
               {confirmRestore.exportedAt ? ` (backed up ${formatLogDate(confirmRestore.exportedAt.slice(0, 10))})` : ""}.
               This can't be undone.
             </p>
